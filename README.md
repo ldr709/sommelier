@@ -1,131 +1,247 @@
-# The Chromium OS Platform
+# Sommelier - Nested Wayland compositor with support for X11 forwarding
 
-This repo holds (most) of the custom code that makes up the Chromium OS
-platform.  That largely covers daemons, programs, and libraries that were
-written specifically for Chromium OS.
+Sommelier is an implementation of a Wayland compositor that delegates
+compositing to a 'host' compositor. Sommelier includes a set of features that
+allows it to run inside a tight jail or virtual machine.
 
-We moved from multiple separate repos in platform/ to a single repo in
-platform2/ for a number of reasons:
+Sommelier can run as service or as a wrapper around the execution of a
+program. As a service, it spawns new processes as needed to service clients.
+The parent process is called the master sommelier.
 
-* Make it easier to work across multiple projects simultaneously
-* Increase code re-use (via common libs) rather than duplicate utility
-  functions multiple items over
-* Share the same build system
+## Sommeliers
 
-While most projects were merged, not all of them were.  Some projects were
-standalone already (such as vboot), or never got around to being folded in
-(such as imageloader).  Some day those extra projects might get merged in.
+### Master Sommelier
 
-Similarly, some projects that were merged in, were then merged back out.
-This was due to the evolution of the Brillo project and collaboration with
-Android.  That means the AOSP repos are the upstream and Chromium OS carries
-copies.
+The master sommelier instance will create a wayland socket in XDG_RUNTIME_DIR
+and accept connections from regular wayland clients. Each connection will be
+serviced by spawning a child sommelier process.
 
-# Local Project Directory
+### X11 Sommelier
 
-| Project | Description |
-|---------|-------------|
-| [arc](./arc/) | Tools/deamons/init-scripts to run ARC |
-| [attestation](./attestation/) | Daemon and client for managing remote attestation |
-| [authpolicy](./authpolicy/) | Daemon for integrating with Microsoft Active Directory (AD) domains |
-| [avtest_label_detect](./avtest_label_detect/) | Test tool for OCRing device labels |
-| [biod](./biod/) | Biometrics daemon |
-| [bluetooth](./bluetooth/) | Bluetooth Service and tools |
-| [bootstat](./bootstat/) | Tools for tracking points in the overall boot process (for metrics) |
-| [buffet](./buffet/) | Daemon for reacting to cloud messages |
-| [camera](./camera/) | Chrome OS Camera daemon |
-| [cecservice](./cecservice/) | Service for switching CEC enabled TVs on and off |
-| [cfm-device-updater](./cfm-device-updater/) | Firmware updaters for CFM peripherals |
-| [chaps](./chaps/) | PKCS #11 implementation for TPM 1 devices |
-| [chromeos-common-script](./chromeos-common-script/) | Shared scripts for partitions and basic disk information |
-| [chromeos-config](./chromeos-config/) | CrOS unified build runtime config manager |
-| [chromeos-dbus-bindings](./chromeos-dbus-bindings/) | Simplifies the implementation of D-Bus daemons and proxies |
-| [common-mk](./common-mk/) | Common build & test logic for platform2 projects |
-| [container_utils](./container_utils/) | Support tools for containers (e.g. device-jail) |
-| [crash-reporter](./crash-reporter/) | The system crash handler & reporter |
-| [cromo](./cromo/) | modemmanager compatible D-Bus interface to support closed source modem drivers |
-| [cros-disks](./cros-disks/) | Daemon for mounting removable media (e.g. USB sticks and SD cards) |
-| [cros_component](./cros_component/) ||
-| [crosdns](./crosdns/) | Hostname resolution service for Chrome OS |
-| [crosh](./crosh/) | The Chromium OS shell |
-| [cryptohome](./cryptohome/) | Daemon and tools for managing encrypted /home and /var directories |
-| [debugd](./debugd/) | Centralized debug daemon for random tools |
-| [diagnostics](./diagnostics/) | Device telemetry and diagnostics daemons |
-| [disk_updater](./disk_updater/) | Utility for updating root disk firmware (e.g. SSDs and eMMC) |
-| [dlcservice](./dlcservice/) | Downloadable Content (DLC) Service daemon |
-| [easy-unlock](./easy-unlock/) | Daemon for handling Easy Unlock requests (e.g. unlocking Chromebooks with an Android device) |
-| [feedback](./feedback/) | Daemon for headless systems that want to gather feedback (normally Chrome manages it) |
-| [fitpicker](./fitpicker/) ||
-| [glib-bridge](./glib-bridge/) | library for libchrome-glib message loop interoperation |
-| [gobi-cromo-plugin](./gobi-cromo-plugin/) | plugin for supporting gobi3k modems with cromo |
-| [goldfishd](./goldfishd/) | Android Emulator Daemon |
-| [hammerd](./hammerd/) | Firmware updater utility for hammer hardware |
-| [hermes](./hermes/) | Chrome OS LPA implementation for eSIM hardware support |
-| [image-burner](./image-burner/) | Daemon for writing disk images (e.g. recovery) to USB sticks & SD cards |
-| [imageloader](./imageloader/) | Daemon for mounting signed disk images |
-| [init](./init/) | CrOS common startup init scripts and boot time helpers |
-| [installer](./installer/) | CrOS installer utility (for AU/recovery/etc...) |
-| [ippusb_manager](./ippusb_manager/) | "Service" for ipp-over-usb printing |
-| [kerberos](./kerberos/) | Daemon for managing Kerberos tickets |
-| [libbrillo](./libbrillo/) | Common platform utility library |
-| [libchromeos-ui](./libchromeos-ui/) ||
-| [libcontainer](./libcontainer/) ||
-| [libpasswordprovider](./libpasswordprovider/) | Password Provider library for securely managing credentials with system services |
-| [libtpmcrypto](./libtpmcrypto/) | Library for AES256-GCM encryption with TPM sealed keys |
-| [login_manager](./login_manager/) | Session manager for handling the life cycle of the main session (e.g. Chrome) |
-| [lorgnette](./lorgnette/) | Daemon for managing attached USB scanners via [SANE](https://en.wikipedia.org/wiki/Scanner_Access_Now_Easy) |
-| [media_perception](./media_perception/) | Media perception service for select platforms |
-| [memd](./metrics/memd/) | Daemon that logs memory-related data and events |
-| [metrics](./metrics/) | Client side user metrics collection |
-| [midis](./midis/) | [MIDI](https://en.wikipedia.org/wiki/MIDI) service |
-| [mist](./mist/) | Modem USB Interface Switching Tool |
-| [ml](./ml/) | Machine learning service |
-| [modem-utilities](./modem-utilities/) ||
-| [modemfwd](./modemfwd/) | Daemon for managing modem firmware updaters |
-| [mtpd](./mtpd/) | Daemon for handling Media Transfer Protocol (MTP) with devices (e.g. phones) |
-| [oobe_config](./oobe_config/) | Utilities for saving and restoring OOBE config state |
-| [p2p](./p2p/) | Service for sharing files between CrOS devices (e.g. updates) |
-| [peerd](./peerd/) | Daemon for communicating with local peers |
-| [permission_broker](./permission_broker/) ||
-| [policy_proto](./policy_proto/) | Build file to compile policy proto file |
-| [policy_utils](./policy_utils/) | Tools and related library to set or override device policies |
-| [portier](./portier/) | Multi-Network Neighbor Discovery Proxy service for Chrome OS |
-| [power_manager](./power_manager/) | Userspace power management daemon and associated tools |
-| [qmi2cpp](./qmi2cpp/) | Chrome OS QMI IDL Compiler |
-| [regions](./regions/) ||
-| [run_oci](./run_oci/) | Minimalistic container runtime |
-| [runtime_probe](./runtime_probe/) | Runtime probe tool for ChromeOS |
-| [salsa](./salsa/) | Touchpad experimentation framework |
-| [screenshot](./screenshot/) | Tiny command to take a screenshot |
-| [secure_erase_file](./secure_erase_file/) | Helper tools for securely erasing files from storage (e.g. keys and PII data) |
-| [security_tests](./security_tests/) | Compiled executables used by Tast security tests |
-| [sepolicy](./sepolicy/) | SELinux policy for Chrome OS |
-| [shill](./shill/) | Chrome OS Connection Manager |
-| [smbprovider](./smbprovider/) | Daemon for connecting Samba / Windows networking shares to the Files.app |
-| [smogcheck](./smogcheck/) | Developer library for working with raw I2C devices |
-| [st_flash](./st_flash/) ||
-| [storage_info](./storage_info/) | Helper shell functions for retrieving disk information) |
-| [system_api](./system_api/) | Headers and .proto files etc. to be shared with chromium |
-| [thd](./thd/) | Thermal daemon to help keep systems running cool |
-| [timberslide](./timberslide/) | Tool for working with EC crashes for reporting purposes |
-| [touch_firmware_calibration](./touch_firmware_calibration/) ||
-| [touch_keyboard](./touch_keyboard/) | Utilities for a touch based virtual keyboard |
-| [tpm2-simulator](./tpm2-simulator/) | A software TPM 2.0 implementation (for testing/debugging) |
-| [tpm_manager](./tpm_manager/) | Daemon and client for managing TPM setup and operations |
-| [trim](./trim/) | Service to manage filesystem trim operations in the background |
-| [trunks](./trunks/) | Middleware and resource manager for interfacing with TPM 2.0 hardware |
-| [u2fd](./u2fd/) | U2FHID emulation daemon for systems with secure elements (not TPMs) |
-| [usb_bouncer](./usb_bouncer/) | Tools for managing USBGuard white-lists and configuration on Chrome OS |
-| [userfeedback](./userfeedback/) | Various utilities to gather extended data for user feedback reports |
-| [userspace_touchpad](./userspace_touchpad/) ||
-| [virtual_file_provider](./virtual_file_provider/) ||
-| [vm_tools](./vm_tools/) | Utilities for Virtual Machine (VM) orchestration |
-| [vpn-manager](./vpn-manager/) ||
-| [webserver](./webserver/) | Small web server with D-Bus client backends |
-| [wifi-testbed](./wifi-testbed/) | Tools for creating a WiFi testbed image |
-| [wimax_manager](./wimax_manager/) ||
+An X11 sommelier instance provides X11 forwarding. Xwayland is used to
+accomplish this. A single X11 sommelier instance is typically shared across
+all X11 clients as they often expect that they can use a shared X server for
+communication. If the X11 sommelier instance crashes in this setup, it takes
+all running X11 programs down with it. Multiple X11 sommelier instances
+can be used for improved isolation or when per-client configuration is
+needed, but it will be at the cost of losing the ability for programs to use
+the X server for communication between each other.
 
-# AOSP Project Directory
+### Peer Sommelier
 
-These projects can be found here:
-https://chromium.googlesource.com/aosp/platform/
+Each Linux program that support the Wayland protocol can have its own sommelier.
+This provides better use of multiple cores when servicing clients, and it
+prevents errors in one client from causing other clients to crash.
+
+## Host Compositor Channel
+
+Sommelier needs a channel to the host compositor in order to serve Wayland
+clients inside a container. If the container environment provides a socket
+that can be used to establish a connection to the host compositor, then
+pointing sommelier to this socket using the `--display=DISPLAY` flag is
+sufficient.
+
+### VirtWL
+
+The VirtWL device can be used to establish a new connection when no socket
+is available (typically when running inside a VM). If a VirtWL device has been
+specified (e.g. `--virtwl-device=/dev/wl0`) then sommelier will use this
+mechanism by default to establish new channels between the host compositor and
+sommelier instances. Data is forwarded between the VirtWL device and the core
+Wayland dispatch mechanism using non-blocking I/O multiplexing.
+
+## Shared Memory Drivers
+
+Shared memory allocated inside a container cannot always be shared with the
+host compositor. Sommelier provides a shared memory driver option as a
+solution for this. What's the most appropriate option depends on the host
+compositor and device drivers available for allocating buffers.
+
+### Noop
+
+The `noop` shared memory driver simply forwards buffers to the host without
+any special processing. This requires that the client inside the container is
+using memory that can be shared with the host compositor.
+
+### VirtWL
+
+The `virtwl` driver creates a set of intermediate virtwl buffers for each
+surface, and copies minimal damaged areas from the client’s standard shared
+memory buffers into the virtwl buffers that can be shared with the host
+compositor.
+
+### VirtWL-DMABuf
+
+The `virtwl-dmabuf` works the same way as the `virtwl` driver but allocates
+buffers that can be shared with the host compositor using the linux_dmabuf
+protocol. The benefits of using this driver over the basic `virtwl` driver
+are:
+
+* Larger set of supported formats (E.g NV12).
+* Host compositor can avoid expensive texture uploads.
+* HW overlays can be used for presentation if support by the host compositor.
+
+### DMABuf
+
+The `dmabuf` driver is similar to the `virtwl-dmabuf` driver. It creates a set
+of intermediate buffers for each surface and copies minimal damaged areas from
+the client’s standard shared memory buffer into the DMABuf buffer. However,
+the buffer is allocated using a DRM device and a prime FD is used to access
+buffer memory inside the container. Intermediate buffers are shared with the
+host compositor using the linux_dmabuf protocol.
+
+## Damage Tracking
+
+Shared memory drivers that use intermediate buffers require some form of
+damage tracking in order to update intermediate buffers.
+
+### Surface Buffer Queue
+
+Each client surface in sommelier is associated with a buffer queue. Each
+buffer in the buffer queue has a region (list of rectangles) that describes
+the part of the buffer that is damaged compared to the last frame submitted
+by the client. This provides high precision damage tracking across multiple
+frames. Each new frame from the client adds damage to existing buffers. When
+submitting a frame to the host compositor, the next available buffer is
+dequeued and updated to not contain any damage. This is done by copying
+contents from the current client buffer into the dequeued buffer.
+
+The client's buffer is released as soon as this copy operation described above
+is complete and the client can then reuse the shared memory buffer for another
+frame.
+
+Note: It is important to release the buffer immediately as clients don’t
+expect it to be held by the compositor for long when using shared memory.
+
+### Back Pressure
+
+Sommelier doesn’t provide any back pressure for when the client is producing
+contents faster than the host compositor can consume it. The size of the
+buffer queue can as a result grow large. This is not a problem as Xwayland
+and other clients handle back pressure themselves using Wayland frame
+callbacks or similar mechanism.
+
+## Data Drivers
+
+Socket pairs created inside a container cannot always be shared with the
+host compositor. Sommelier provides a data driver option as a solution
+for this.
+
+### Noop
+
+The `noop` driver simply forwards socket pair FDs to the host without any
+special processing. This requires that the client inside the container is
+using socket pairs that can be shared with the host compositor.
+
+### VirtWL
+
+The `virtwl` driver creates a special pipe that can be shared with the host
+compositor and forwards all data received over this pipe to the client FD.
+Forwarding is done using non-blocking I/O multiplexing.
+
+## Flags and Settings
+
+Sommelier has two forms of configuration. Command line flags and environment
+variables. Standard practice is to expose each option both as a command line
+flag and as an environment variable. Command line flags will always override
+the configuration provided by environment variables. This makes it easy to
+run sommelier as a systemd service and allow the system-wide configuration
+to be overridden using a local user provided systemd override file.
+
+## Density and Scaling
+
+A protocol aware proxy compositor between the client and the host compositor
+makes it easier to support Linux programs that lack good HiDPI support.
+It can also be used to adjust the scale of contents to support the dynamic
+density changes that Chrome OS UI provide, and it gives the user an option
+override any density decisions made by the host compositor. For example,
+HiDPI aware programs can run at native display resolution, while some older
+programs can use half of that resolution.
+
+### Contents Scaling
+
+Contents scaling can be applied to both native wayland clients and X11
+clients. It can be controlled using the `--scale=SCALE` flag or
+`SOMMELIER_SCALE=SCALE` variable. Where `SCALE` is a display density
+multiplier. For example, if the default density is 200 DPI, then using
+`--scale=0.5` will result in contents produced for 100 DPI.
+
+### Scale Factor
+
+An optimal scale factor is calculated for Wayland clients based on contents
+scale setting and the current host compositor scaling. This allows Wayland
+clients to produce contents at an optimal resolution for all combinations of
+scaling used by sommelier and the host compositor.
+
+### DPI
+
+An exact value for DPI is calculated by sommelier. However, many Linux
+programs expect DPI to be one out of a well known set of values. Sommelier
+solves this by adjusting DPI using a set of buckets. For example, given the
+default set of buckets (72, 96, 160, 240), Sommelier will use 96 as DPI when
+the exact value is 112, or 160 when exact value is 188. The DPI buckets that
+sommelier should use can be specified with `--dpi=[DPI[,DPI...]]`. Where,
+`--dpi=””` will result in sommelier exposing the exact DPI value to clients.
+
+### XCursor
+
+Sommelier will set `XCURSOR_SIZE` environment variable automatically based on
+the contents scale and preferred host compositor scale factor.
+
+## Accelerators
+
+If the host compositor support dynamic handling of keyboard events, then
+keyboard shortcuts are forwarded to the Linux program by default. A small set
+of shortcuts are expected to be reserved by the host compositor. A list of
+reserved shortcuts on Chrome OS can be found
+[here](https://chromium.googlesource.com/chromium/src/+/master/ash/accelerators/accelerator_table.h#22).
+
+There’s unfortunately no reliable way to detect if a Linux program handled a
+key event or not. This means that all non-reserved shortcuts that the user
+want the host compositor to handle needs to be explicitly listed as an
+accelerator. For example, on Chrome OS, the launcher can be brought up using
+the "launcher" button during normal usage. The "launcher" button event is
+forwarded to Linux programs by default so it won’t work when a Linux program
+has keyboard focus unless this shortcut is explicitly listed as an accelerator.
+
+Sommelier provides the `--accelerator=ACCELERATORS` flag for this purpose.
+`ACCELERATORS` is a comma separated list of accelerators that shouldn’t be
+forwarded to the Linux program but instead handled by the host compositor.
+Each accelerator can contain a list of modifiers (e.g. `<Control><Alt>`) and
+must be followed by an XKB keysym. The `xev` utility can be used to determine
+what the XKB keysym is for a specific key. Given the launcher button example
+above (which happens to have XKB keysym `Super_L` on the Chromebook Pixel),
+`--accelerators=Super_L` needs to be passed to sommelier for the this button to
+bring up the application launcher when Linux programs have keyboard focus.
+
+Consistent with other flags, `SOMMELIER_ACCELERATORS` environment variable can
+be used as an alternative to the command line flag.
+
+## Examples
+
+Start master sommelier and use wayland-1 as name of socket to listen on:
+
+```
+sommelier --master --socket=wayland-1
+```
+
+Start sommelier that runs weston-terminal with density scale multiplier 1.5:
+
+```
+sommelier --scale=1.5 weston-terminal
+```
+
+Start sommelier that runs inkscape with density scale multiplier 0.75 and 120
+dots per inch (note that -X is specified as inkscape is an X11 client and
+requires X11 forwarding):
+
+```
+sommelier -X --scale=0.75 --dpi=120 inkscape
+```
+
+Start sommelier that runs gedit with some accelerators reserved to the host
+compositor instead of being sent to gedit:
+
+```
+sommelier --accelerators="<Alt>Bracketright,<Alt>Bracketleft" gedit
+```

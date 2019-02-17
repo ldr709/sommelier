@@ -1,2 +1,0 @@
-# authpolicyd sets its saved UID to the 'authpolicyd-exec' user
-254:607

@@ -1,1 +1,0 @@
-SUBSYSTEM=="chromeos", KERNEL=="cros_fp" OWNER="root", GROUP="biod" MODE="0660"
