@@ -209,8 +209,6 @@ static void sl_shm_create_host_pool(struct wl_client* client,
       close(fd);
       break;
     case SHM_DRIVER_DMABUF:
-    case SHM_DRIVER_VIRTWL:
-    case SHM_DRIVER_VIRTWL_DMABUF:
       host_shm_pool->fd = fd;
       break;
   }
@@ -302,14 +300,6 @@ static void sl_bind_host_shm(struct wl_client* client,
 
   switch (ctx->shm_driver) {
     case SHM_DRIVER_NOOP:
-    case SHM_DRIVER_VIRTWL:
-      host->shm_proxy = wl_registry_bind(
-          wl_display_get_registry(ctx->display), ctx->shm->id,
-          &wl_shm_interface, wl_resource_get_version(host->resource));
-      wl_shm_set_user_data(host->shm_proxy, host);
-      wl_shm_add_listener(host->shm_proxy, &sl_shm_listener, host);
-      break;
-    case SHM_DRIVER_VIRTWL_DMABUF:
     case SHM_DRIVER_DMABUF:
       assert(ctx->linux_dmabuf);
       host->linux_dmabuf_proxy = wl_registry_bind(

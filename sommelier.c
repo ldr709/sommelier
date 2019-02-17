@@ -9,7 +9,6 @@
 #include <fcntl.h>
 #include <gbm.h>
 #include <libgen.h>
-#include <linux/virtwl.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,9 +45,6 @@
 #endif
 #ifndef SHM_DRIVER
 #error SHM_DRIVER must be defined
-#endif
-#ifndef VIRTWL_DEVICE
-#error VIRTWL_DEVICE must be defined
 #endif
 #ifndef PEER_CMD_PREFIX
 #error PEER_CMD_PREFIX must be defined
@@ -2526,23 +2522,6 @@ static void sl_send_data(struct sl_context* ctx) {
   ctx->selection_data_ack_pending = 0;
 
   switch (ctx->data_driver) {
-    case DATA_DRIVER_VIRTWL: {
-      struct virtwl_ioctl_new new_pipe = {
-          .type = VIRTWL_IOCTL_NEW_PIPE_READ, .fd = -1, .flags = 0, .size = 0,
-      };
-
-      rv = ioctl(ctx->virtwl_fd, VIRTWL_IOCTL_NEW, &new_pipe);
-      if (rv) {
-        fprintf(stderr, "error: failed to create virtwl pipe: %s\n",
-                strerror(errno));
-        sl_send_selection_notify(ctx, XCB_ATOM_NONE);
-        return;
-      }
-
-      ctx->selection_data_offer_receive_fd = new_pipe.fd;
-      wl_data_offer_receive(ctx->selection_data_offer->internal,
-                            sl_utf8_mime_type, new_pipe.fd);
-    } break;
     case DATA_DRIVER_NOOP: {
       int p[2];
 
@@ -3010,125 +2989,6 @@ static void sl_client_destroy_notify(struct wl_listener* listener, void* data) {
   exit(0);
 }
 
-static int sl_handle_virtwl_ctx_event(int fd, uint32_t mask, void* data) {
-  struct sl_context* ctx = (struct sl_context*)data;
-  uint8_t ioctl_buffer[4096];
-  struct virtwl_ioctl_txn *ioctl_recv = (struct virtwl_ioctl_txn *)ioctl_buffer;
-  void *recv_data = ioctl_buffer + sizeof(struct virtwl_ioctl_txn);
-  size_t max_recv_size = sizeof(ioctl_buffer) - sizeof(struct virtwl_ioctl_txn);
-  char fd_buffer[CMSG_LEN(sizeof(int) * VIRTWL_SEND_MAX_ALLOCS)];
-  struct msghdr msg = {0};
-  struct iovec buffer_iov;
-  ssize_t bytes;
-  int fd_count;
-  int rv;
-
-  ioctl_recv->len = max_recv_size;
-  rv = ioctl(fd, VIRTWL_IOCTL_RECV, ioctl_recv);
-  if (rv) {
-    close(ctx->virtwl_socket_fd);
-    ctx->virtwl_socket_fd = -1;
-    return 0;
-  }
-
-  buffer_iov.iov_base = recv_data;
-  buffer_iov.iov_len = ioctl_recv->len;
-
-  msg.msg_iov = &buffer_iov;
-  msg.msg_iovlen = 1;
-  msg.msg_control = fd_buffer;
-
-  // Count how many FDs the kernel gave us.
-  for (fd_count = 0; fd_count < VIRTWL_SEND_MAX_ALLOCS; fd_count++) {
-    if (ioctl_recv->fds[fd_count] < 0)
-      break;
-  }
-  if (fd_count) {
-    struct cmsghdr *cmsg;
-
-    // Need to set msg_controllen so CMSG_FIRSTHDR will return the first
-    // cmsghdr. We copy every fd we just received from the ioctl into this
-    // cmsghdr.
-    msg.msg_controllen = sizeof(fd_buffer);
-    cmsg = CMSG_FIRSTHDR(&msg);
-    cmsg->cmsg_level = SOL_SOCKET;
-    cmsg->cmsg_type = SCM_RIGHTS;
-    cmsg->cmsg_len = CMSG_LEN(fd_count * sizeof(int));
-    memcpy(CMSG_DATA(cmsg), ioctl_recv->fds, fd_count * sizeof(int));
-    msg.msg_controllen = cmsg->cmsg_len;
-  }
-
-  bytes = sendmsg(ctx->virtwl_socket_fd, &msg, MSG_NOSIGNAL);
-  assert(bytes == ioctl_recv->len);
-  UNUSED(bytes);
-
-  while (fd_count--)
-    close(ioctl_recv->fds[fd_count]);
-
-  return 1;
-}
-
-static int sl_handle_virtwl_socket_event(int fd, uint32_t mask, void* data) {
-  struct sl_context* ctx = (struct sl_context*)data;
-  uint8_t ioctl_buffer[4096];
-  struct virtwl_ioctl_txn *ioctl_send = (struct virtwl_ioctl_txn *)ioctl_buffer;
-  void *send_data = ioctl_buffer + sizeof(struct virtwl_ioctl_txn);
-  size_t max_send_size = sizeof(ioctl_buffer) - sizeof(struct virtwl_ioctl_txn);
-  char fd_buffer[CMSG_LEN(sizeof(int) * VIRTWL_SEND_MAX_ALLOCS)];
-  struct iovec buffer_iov;
-  struct msghdr msg = {0};
-  struct cmsghdr *cmsg;
-  ssize_t bytes;
-  int fd_count = 0;
-  int rv;
-  int i;
-
-  buffer_iov.iov_base = send_data;
-  buffer_iov.iov_len = max_send_size;
-
-  msg.msg_iov = &buffer_iov;
-  msg.msg_iovlen = 1;
-  msg.msg_control = fd_buffer;
-  msg.msg_controllen = sizeof(fd_buffer);
-
-  bytes = recvmsg(ctx->virtwl_socket_fd, &msg, 0);
-  assert(bytes > 0);
-
-  // If there were any FDs recv'd by recvmsg, there will be some data in the
-  // msg_control buffer. To get the FDs out we iterate all cmsghdr's within and
-  // unpack the FDs if the cmsghdr type is SCM_RIGHTS.
-  for (cmsg = msg.msg_controllen != 0 ? CMSG_FIRSTHDR(&msg) : NULL; cmsg;
-       cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-    size_t cmsg_fd_count;
-
-    if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS)
-      continue;
-
-    cmsg_fd_count = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
-
-    // fd_count will never exceed VIRTWL_SEND_MAX_ALLOCS because the
-    // control message buffer only allocates enough space for that many FDs.
-    memcpy(&ioctl_send->fds[fd_count], CMSG_DATA(cmsg),
-           cmsg_fd_count * sizeof(int));
-    fd_count += cmsg_fd_count;
-  }
-
-  for (i = fd_count; i < VIRTWL_SEND_MAX_ALLOCS; ++i)
-    ioctl_send->fds[i] = -1;
-
-  // The FDs and data were extracted from the recvmsg call into the ioctl_send
-  // structure which we now pass along to the kernel.
-  ioctl_send->len = bytes;
-  rv = ioctl(ctx->virtwl_ctx_fd, VIRTWL_IOCTL_SEND, ioctl_send);
-  assert(!rv);
-  UNUSED(rv);
-
-  while (fd_count--)
-    close(ioctl_send->fds[fd_count]);
-
-  return 1;
-}
-
 // Break |str| into a sequence of zero or more nonempty arguments. No more
 // than |argc| arguments will be added to |argv|. Returns the total number of
 // argments found in |str|.
@@ -3178,8 +3038,6 @@ static void sl_print_usage() {
       "  --master\t\t\tRun as master and spawn child processes\n"
       "  --socket=SOCKET\t\tName of socket to listen on\n"
       "  --display=DISPLAY\t\tWayland display to connect to\n"
-      "  --shm-driver=DRIVER\t\tSHM driver to use (noop, dmabuf, virtwl)\n"
-      "  --data-driver=DRIVER\t\tData driver to use (noop, virtwl)\n"
       "  --scale=SCALE\t\t\tScale factor for contents\n"
       "  --dpi=[DPI[,DPI...]]\t\tDPI buckets\n"
       "  --peer-cmd-prefix=PREFIX\tPeer process command line prefix\n"
@@ -3192,7 +3050,6 @@ static void sl_print_usage() {
       "  --no-exit-with-child\t\tKeep process alive after child exists\n"
       "  --no-clipboard-manager\tDisable X11 clipboard manager\n"
       "  --frame-color=COLOR\t\tWindow frame color for X11 clients\n"
-      "  --virtwl-device=DEVICE\tVirtWL device to use\n"
       "  --drm-device=DEVICE\t\tDRM device to use\n"
       "  --glamor\t\t\tUse glamor to accelerate X11 clients\n");
 }
@@ -3229,11 +3086,6 @@ int main(int argc, char **argv) {
       .shm_driver = SHM_DRIVER_NOOP,
       .data_driver = DATA_DRIVER_NOOP,
       .wm_fd = -1,
-      .virtwl_fd = -1,
-      .virtwl_ctx_fd = -1,
-      .virtwl_socket_fd = -1,
-      .virtwl_ctx_event_source = NULL,
-      .virtwl_socket_event_source = NULL,
       .drm_device = NULL,
       .gbm = NULL,
       .xwayland = 0,
@@ -3312,7 +3164,6 @@ int main(int argc, char **argv) {
   const char *clipboard_manager = getenv("SOMMELIER_CLIPBOARD_MANAGER");
   const char *frame_color = getenv("SOMMELIER_FRAME_COLOR");
   const char* dark_frame_color = getenv("SOMMELIER_DARK_FRAME_COLOR");
-  const char *virtwl_device = getenv("SOMMELIER_VIRTWL_DEVICE");
   const char *drm_device = getenv("SOMMELIER_DRM_DEVICE");
   const char *glamor = getenv("SOMMELIER_GLAMOR");
   const char *shm_driver = getenv("SOMMELIER_SHM_DRIVER");
@@ -3332,7 +3183,6 @@ int main(int argc, char **argv) {
                                                     sl_client_destroy_notify};
   int sv[2];
   pid_t pid;
-  int virtwl_display_fd = -1;
   int xdisplay = -1;
   int master = 0;
   int client_fd = -1;
@@ -3396,8 +3246,6 @@ int main(int argc, char **argv) {
       frame_color = sl_arg_value(arg);
     } else if (strstr(arg, "--dark-frame-color") == arg) {
       dark_frame_color = sl_arg_value(arg);
-    } else if (strstr(arg, "--virtwl-device") == arg) {
-      virtwl_device = sl_arg_value(arg);
     } else if (strstr(arg, "--drm-device") == arg) {
       drm_device = sl_arg_value(arg);
     } else if (strstr(arg, "--glamor") == arg) {
@@ -3546,7 +3394,6 @@ int main(int argc, char **argv) {
           if (strstr(arg, "--display") == arg ||
               strstr(arg, "--scale") == arg ||
               strstr(arg, "--accelerators") == arg ||
-              strstr(arg, "--virtwl-device") == arg ||
               strstr(arg, "--drm-device") == arg ||
               strstr(arg, "--shm-driver") == arg ||
               strstr(arg, "--data-driver") == arg) {
@@ -3613,53 +3460,6 @@ int main(int argc, char **argv) {
 
   event_loop = wl_display_get_event_loop(ctx.host_display);
 
-  if (!virtwl_device)
-    virtwl_device = VIRTWL_DEVICE;
-
-  if (virtwl_device) {
-    struct virtwl_ioctl_new new_ctx = {
-        .type = VIRTWL_IOCTL_NEW_CTX, .fd = -1, .flags = 0, .size = 0,
-    };
-
-    ctx.virtwl_fd = open(virtwl_device, O_RDWR);
-    if (ctx.virtwl_fd == -1) {
-      fprintf(stderr, "error: could not open %s (%s)\n", virtwl_device,
-              strerror(errno));
-      return EXIT_FAILURE;
-    }
-
-    // We use a virtwl context unless display was explicitly specified.
-    // WARNING: It's critical that we never call wl_display_roundtrip
-    // as we're not spawning a new thread to handle forwarding. Calling
-    // wl_display_roundtrip will cause a deadlock.
-    if (!display) {
-      int vws[2];
-
-      // Connection to virtwl channel.
-      rv = socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, vws);
-      assert(!rv);
-
-      ctx.virtwl_socket_fd = vws[0];
-      virtwl_display_fd = vws[1];
-
-      rv = ioctl(ctx.virtwl_fd, VIRTWL_IOCTL_NEW, &new_ctx);
-      if (rv) {
-        fprintf(stderr, "error: failed to create virtwl context: %s\n",
-                strerror(errno));
-        return EXIT_FAILURE;
-      }
-
-      ctx.virtwl_ctx_fd = new_ctx.fd;
-
-      ctx.virtwl_socket_event_source = wl_event_loop_add_fd(
-          event_loop, ctx.virtwl_socket_fd, WL_EVENT_READABLE,
-          sl_handle_virtwl_socket_event, &ctx);
-      ctx.virtwl_ctx_event_source =
-          wl_event_loop_add_fd(event_loop, ctx.virtwl_ctx_fd, WL_EVENT_READABLE,
-                               sl_handle_virtwl_ctx_event, &ctx);
-    }
-  }
-
   if (drm_device) {
     int drm_fd = open(drm_device, O_RDWR | O_CLOEXEC);
     if (drm_fd == -1) {
@@ -3687,54 +3487,9 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
       }
       ctx.shm_driver = SHM_DRIVER_DMABUF;
-    } else if (strcmp(shm_driver, "virtwl") == 0 ||
-               strcmp(shm_driver, "virtwl-dmabuf") == 0) {
-      if (ctx.virtwl_fd == -1) {
-        fprintf(stderr, "error: need device for virtwl driver\n");
-        return EXIT_FAILURE;
-      }
-      ctx.shm_driver = strcmp(shm_driver, "virtwl") ? SHM_DRIVER_VIRTWL_DMABUF
-                                                    : SHM_DRIVER_VIRTWL;
-      // Check for compatibility with virtwl-dmabuf.
-      if (ctx.shm_driver == SHM_DRIVER_VIRTWL_DMABUF) {
-        struct virtwl_ioctl_new new_dmabuf = {
-            .type = VIRTWL_IOCTL_NEW_DMABUF,
-            .fd = -1,
-            .flags = 0,
-            .dmabuf =
-                {
-                    .width = 0, .height = 0, .format = 0,
-                },
-        };
-        if (ioctl(ctx.virtwl_fd, VIRTWL_IOCTL_NEW, &new_dmabuf) == -1 &&
-            errno == ENOTTY) {
-          fprintf(stderr,
-                  "warning: virtwl-dmabuf driver not supported by host, using "
-                  "virtwl instead\n");
-          ctx.shm_driver = SHM_DRIVER_VIRTWL;
-        } else if (new_dmabuf.fd >= 0) {
-          // Close the returned dmabuf fd in case the invalid dmabuf metadata
-          // given above actually manages to return an fd successfully.
-          close(new_dmabuf.fd);
-        }
-      }
     }
   } else if (ctx.drm_device) {
     ctx.shm_driver = SHM_DRIVER_DMABUF;
-  } else if (ctx.virtwl_fd != -1) {
-    ctx.shm_driver = SHM_DRIVER_VIRTWL_DMABUF;
-  }
-
-  if (data_driver) {
-    if (strcmp(data_driver, "virtwl") == 0) {
-      if (ctx.virtwl_fd == -1) {
-        fprintf(stderr, "error: need device for virtwl driver\n");
-        return EXIT_FAILURE;
-      }
-      ctx.data_driver = DATA_DRIVER_VIRTWL;
-    }
-  } else if (ctx.virtwl_fd != -1) {
-    ctx.data_driver = DATA_DRIVER_VIRTWL;
   }
 
   // Use well known values for DPI by default with Xwayland.
@@ -3771,16 +3526,12 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  if (virtwl_display_fd != -1) {
-    ctx.display = wl_display_connect_to_fd(virtwl_display_fd);
-  } else {
     if (display == NULL)
       display = getenv("WAYLAND_DISPLAY");
     if (display == NULL)
       display = "wayland-0";
 
     ctx.display = wl_display_connect(display);
-  }
 
   if (!ctx.display) {
     fprintf(stderr, "error: failed to connect to %s\n", display);

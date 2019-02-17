@@ -75,13 +75,10 @@ enum {
 enum {
   SHM_DRIVER_NOOP,
   SHM_DRIVER_DMABUF,
-  SHM_DRIVER_VIRTWL,
-  SHM_DRIVER_VIRTWL_DMABUF,
 };
 
 enum {
   DATA_DRIVER_NOOP,
-  DATA_DRIVER_VIRTWL,
 };
 
 struct sl_context {
@@ -109,11 +106,6 @@ struct sl_context {
   int shm_driver;
   int data_driver;
   int wm_fd;
-  int virtwl_fd;
-  int virtwl_ctx_fd;
-  int virtwl_socket_fd;
-  struct wl_event_source* virtwl_ctx_event_source;
-  struct wl_event_source* virtwl_socket_event_source;
   const char* drm_device;
   struct gbm_device* gbm;
   int xwayland;

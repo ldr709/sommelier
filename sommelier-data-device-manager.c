@@ -7,7 +7,6 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/virtwl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -171,25 +170,6 @@ static void sl_data_offer_receive(struct wl_client* client,
   struct sl_host_data_offer* host = wl_resource_get_user_data(resource);
 
   switch (host->ctx->data_driver) {
-    case DATA_DRIVER_VIRTWL: {
-      struct virtwl_ioctl_new new_pipe = {
-          .type = VIRTWL_IOCTL_NEW_PIPE_READ, .fd = -1, .flags = 0, .size = 0,
-      };
-      int rv;
-
-      rv = ioctl(host->ctx->virtwl_fd, VIRTWL_IOCTL_NEW, &new_pipe);
-      if (rv) {
-        fprintf(stderr, "error: failed to create virtwl pipe: %s\n",
-                strerror(errno));
-        close(fd);
-        return;
-      }
-
-      sl_data_transfer_create(
-          wl_display_get_event_loop(host->ctx->host_display), new_pipe.fd, fd);
-
-      wl_data_offer_receive(host->proxy, mime_type, new_pipe.fd);
-    } break;
     case DATA_DRIVER_NOOP:
       wl_data_offer_receive(host->proxy, mime_type, fd);
       close(fd);
