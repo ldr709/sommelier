@@ -18,8 +18,8 @@ add_project_arguments(
 
 		'-D_GNU_SOURCE',
 		'-DWL_HIDE_DEPRECATED',
-		'-DXWAYLAND_PATH="/run/current-system/sw/bin/Xwayland"',
-		'-DXWAYLAND_GL_DRIVER_PATH="/run/opengl-driver/lib"',
+		'-DXWAYLAND_PATH="Xwayland"',
+		'-DXWAYLAND_GL_DRIVER_PATH=""',
 		'-DXWAYLAND_SHM_DRIVER="noop"',
 		'-DSHM_DRIVER="noop"',
 		'-DPEER_CMD_PREFIX=""',

@@ -1,17 +1,42 @@
 # Local Changes
- 
-- https://chromium.googlesource.com/chromiumos/overlays/chromiumos-overlay/+/refs/heads/master/sys-kernel/linux-headers/files/0010-virtwl-add-virtwl-driver.patch
-- https://chromium.googlesource.com/chromiumos/platform2/+/master/vm_tools/sommelier/
 
-To build:
-sudo apt install -y pkg-config git make xwayland libwayland-dev libgbm-dev gcc libx11-xcb-dev libsystemd-dev libxcb-composite0-dev libxkbcommon-dev libxrender-dev libxtst-dev libpixman-1-dev
+## To build
 
-meson out
-cd out && ninja
+    sudo apt install -y pkg-config git make xwayland libwayland-dev libgbm-dev gcc libx11-xcb-dev \
+        libsystemd-dev libxcb-composite0-dev libxkbcommon-dev libxrender-dev libxtst-dev libpixman-1-dev
 
-GDK_SCALE=2 ./sommelier --shm-driver=noop --data-driver=noop --x-display=:0 --xwayland-path=`which Xwayland` --xwayland-gl-driver-path=/lib/x86_64-linux-gnu/dri --scale=2 --dpi=400 gedit
+    meson out
+    cd out
+    ninja
+    meson install
 
-./sommelier --shm-driver=noop --data-driver=noop -X --xwayland-path=`which Xwayland` --xwayland-gl-driver-path=/lib/x86_64-linux-gnu/dri --scale=2 intellij-idea-ultimate
+## Usage Examples
+
+per-app scaling with GTK:
+
+    GDK_BACKEND=x11 GDK_SCALE=2 sommelier -X --scale=2 gedit -s --gdk-debug=misc
+
+shared X server:
+
+    sommelier -X --scale=2 --x-display=2 --no-exit-with-child true
+    export DISPLAY=:2
+    
+    intellij-idea-ultimate
+
+## Issues
+
+vs-code:
+    
+    GDK_SCALE=2 sommelier -X --scale=2 code -w
+
+error: zxdg_surface_v6@35: error 3: xdg_surface has never been configured
+
+## References
+
+- [virtwl.h source](https://chromium.googlesource.com/chromiumos/overlays/chromiumos-overlay/+/refs/heads/master/sys-kernel/linux-headers/files/0010-virtwl-add-virtwl-driver.patch)
+- [upstream source](https://chromium.googlesource.com/chromiumos/platform2/+/master/vm_tools/sommelier/)
+
+Original readme follows:
 
 # Sommelier - Nested Wayland compositor with support for X11 forwarding
 
