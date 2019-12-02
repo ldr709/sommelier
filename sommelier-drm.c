@@ -57,9 +57,8 @@ static void sl_drm_create_planar_buffer(struct wl_client* client,
   assert(0);
 }
 
-static void sl_drm_sync(struct sl_context *ctx,
-                        struct sl_sync_point* sync_point)
-{
+static void sl_drm_sync(struct sl_context* ctx,
+                        struct sl_sync_point* sync_point) {
   int drm_fd = gbm_device_get_fd(ctx->gbm);
   struct drm_prime_handle prime_handle;
   int ret;
@@ -153,10 +152,10 @@ static void sl_drm_create_prime_buffer(struct wl_client* client,
                                  0);
 
   struct sl_host_buffer* host_buffer =
-    sl_create_host_buffer(client, id,
-                          zwp_linux_buffer_params_v1_create_immed(
-                              buffer_params, width, height, format, 0),
-                          width, height);
+      sl_create_host_buffer(client, id,
+                            zwp_linux_buffer_params_v1_create_immed(
+                                buffer_params, width, height, format, 0),
+                            width, height);
   if (is_gpu_buffer) {
     host_buffer->sync_point = sl_sync_point_create(name);
     host_buffer->sync_point->sync = sl_drm_sync;
@@ -192,6 +191,7 @@ static void sl_drm_format(void* data,
     case WL_DRM_FORMAT_XRGB8888:
     case WL_DRM_FORMAT_XBGR8888:
       wl_drm_send_format(host->resource, format);
+      break;
     default:
       break;
   }

@@ -1,3 +1,18 @@
+# Local Changes
+ 
+- https://chromium.googlesource.com/chromiumos/overlays/chromiumos-overlay/+/refs/heads/master/sys-kernel/linux-headers/files/0010-virtwl-add-virtwl-driver.patch
+- https://chromium.googlesource.com/chromiumos/platform2/+/master/vm_tools/sommelier/
+
+To build:
+sudo apt install -y pkg-config git make xwayland libwayland-dev libgbm-dev gcc libx11-xcb-dev libsystemd-dev libxcb-composite0-dev libxkbcommon-dev libxrender-dev libxtst-dev libpixman-1-dev
+
+meson out
+cd out && ninja
+
+GDK_SCALE=2 ./sommelier --shm-driver=noop --data-driver=noop --x-display=:0 --xwayland-path=`which Xwayland` --xwayland-gl-driver-path=/lib/x86_64-linux-gnu/dri --scale=2 --dpi=400 gedit
+
+./sommelier --shm-driver=noop --data-driver=noop -X --xwayland-path=`which Xwayland` --xwayland-gl-driver-path=/lib/x86_64-linux-gnu/dri --scale=2 intellij-idea-ultimate
+
 # Sommelier - Nested Wayland compositor with support for X11 forwarding
 
 Sommelier is an implementation of a Wayland compositor that delegates
@@ -178,10 +193,11 @@ scaling used by sommelier and the host compositor.
 An exact value for DPI is calculated by sommelier. However, many Linux
 programs expect DPI to be one out of a well known set of values. Sommelier
 solves this by adjusting DPI using a set of buckets. For example, given the
-default set of buckets (72, 96, 160, 240), Sommelier will use 96 as DPI when
-the exact value is 112, or 160 when exact value is 188. The DPI buckets that
+set of buckets (72, 96, 160, 240), Sommelier will use 96 as DPI when the
+exact value is 112, or 160 when exact value is 188. The DPI buckets that
 sommelier should use can be specified with `--dpi=[DPI[,DPI...]]`. Where,
-`--dpi=””` will result in sommelier exposing the exact DPI value to clients.
+`--dpi=””` will result in sommelier exposing the exact DPI value to clients
+(this is the default behaviour).
 
 ### XCursor
 

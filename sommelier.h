@@ -38,6 +38,8 @@ struct sl_viewporter;
 struct sl_linux_dmabuf;
 struct sl_keyboard_extension;
 struct sl_text_input_manager;
+struct sl_relative_pointer_manager;
+struct sl_pointer_constraints;
 struct sl_window;
 struct zaura_shell;
 struct zcr_keyboard_extension_v1;
@@ -46,14 +48,17 @@ enum {
   ATOM_WM_S0,
   ATOM_WM_PROTOCOLS,
   ATOM_WM_STATE,
+  ATOM_WM_CHANGE_STATE,
   ATOM_WM_DELETE_WINDOW,
   ATOM_WM_TAKE_FOCUS,
   ATOM_WM_CLIENT_LEADER,
   ATOM_WL_SURFACE_ID,
   ATOM_UTF8_STRING,
   ATOM_MOTIF_WM_HINTS,
+  ATOM_NET_ACTIVE_WINDOW,
   ATOM_NET_FRAME_EXTENTS,
   ATOM_NET_STARTUP_ID,
+  ATOM_NET_SUPPORTED,
   ATOM_NET_SUPPORTING_WM_CHECK,
   ATOM_NET_WM_NAME,
   ATOM_NET_WM_MOVERESIZE,
@@ -75,10 +80,13 @@ enum {
 enum {
   SHM_DRIVER_NOOP,
   SHM_DRIVER_DMABUF,
+  SHM_DRIVER_VIRTWL,
+  SHM_DRIVER_VIRTWL_DMABUF,
 };
 
 enum {
   DATA_DRIVER_NOOP,
+  DATA_DRIVER_VIRTWL,
 };
 
 struct sl_context {
@@ -97,6 +105,8 @@ struct sl_context {
   struct sl_linux_dmabuf* linux_dmabuf;
   struct sl_keyboard_extension* keyboard_extension;
   struct sl_text_input_manager* text_input_manager;
+  struct sl_relative_pointer_manager* relative_pointer_manager;
+  struct sl_pointer_constraints* pointer_constraints;
   struct wl_list outputs;
   struct wl_list seats;
   struct wl_event_source* display_event_source;
@@ -106,6 +116,11 @@ struct sl_context {
   int shm_driver;
   int data_driver;
   int wm_fd;
+  int virtwl_fd;
+  int virtwl_ctx_fd;
+  int virtwl_socket_fd;
+  struct wl_event_source* virtwl_ctx_event_source;
+  struct wl_event_source* virtwl_socket_event_source;
   const char* drm_device;
   struct gbm_device* gbm;
   int xwayland;
@@ -144,10 +159,12 @@ struct sl_context {
   struct sl_data_offer* selection_data_offer;
   struct sl_data_source* selection_data_source;
   int selection_data_source_send_fd;
+  struct wl_list selection_data_source_send_pending;
   struct wl_event_source* selection_send_event_source;
   xcb_get_property_reply_t* selection_property_reply;
   int selection_property_offset;
   struct wl_event_source* selection_event_source;
+  xcb_atom_t selection_data_type;
   struct wl_array selection_data;
   int selection_data_offer_receive_fd;
   int selection_data_ack_pending;
@@ -184,6 +201,22 @@ struct sl_seat {
   struct wl_list link;
 };
 
+struct sl_host_pointer {
+  struct sl_seat* seat;
+  struct wl_resource* resource;
+  struct wl_pointer* proxy;
+  struct wl_resource* focus_resource;
+  struct wl_listener focus_resource_listener;
+  uint32_t focus_serial;
+};
+
+struct sl_relative_pointer_manager {
+  struct sl_context* ctx;
+  uint32_t id;
+  struct sl_global* host_global;
+  struct zwp_relative_pointer_manager_v1* internal;
+};
+
 struct sl_viewport {
   struct wl_list link;
   wl_fixed_t src_x;
@@ -217,6 +250,12 @@ struct sl_host_surface {
   struct wl_list busy_buffers;
 };
 
+struct sl_host_region {
+  struct sl_context* ctx;
+  struct wl_resource* resource;
+  struct wl_region* proxy;
+};
+
 struct sl_host_buffer {
   struct wl_resource* resource;
   struct wl_buffer* proxy;
@@ -225,6 +264,13 @@ struct sl_host_buffer {
   struct sl_mmap* shm_mmap;
   uint32_t shm_format;
   struct sl_sync_point* sync_point;
+};
+
+struct sl_data_source_send_request {
+  int fd;
+  xcb_intern_atom_cookie_t cookie;
+  struct sl_data_source* data_source;
+  struct wl_list link;
 };
 
 struct sl_subcompositor {
@@ -302,7 +348,8 @@ struct sl_data_device_manager {
 struct sl_data_offer {
   struct sl_context* ctx;
   struct wl_data_offer* internal;
-  int utf8_text;
+  struct wl_array atoms;    // Contains xcb_atom_t
+  struct wl_array cookies;  // Contains xcb_intern_atom_cookie_t
 };
 
 struct sl_text_input_manager {
@@ -310,6 +357,13 @@ struct sl_text_input_manager {
   uint32_t id;
   struct sl_global* host_global;
   struct zwp_text_input_manager_v1* internal;
+};
+
+struct sl_pointer_constraints {
+  struct sl_context* ctx;
+  uint32_t id;
+  struct sl_global* host_global;
+  struct zwp_pointer_constraints_v1* internal;
 };
 
 struct sl_viewporter {
@@ -375,7 +429,7 @@ struct sl_mmap {
   struct wl_resource* buffer_resource;
 };
 
-typedef void (*sl_sync_func_t)(struct sl_context *ctx,
+typedef void (*sl_sync_func_t)(struct sl_context* ctx,
                                struct sl_sync_point* sync_point);
 
 struct sl_sync_point {
@@ -406,6 +460,7 @@ struct sl_window {
   int managed;
   int realized;
   int activated;
+  int maximized;
   int allow_resize;
   xcb_window_t transient_for;
   xcb_window_t client_leader;
@@ -460,6 +515,9 @@ struct sl_global* sl_output_global_create(struct sl_output* output);
 
 struct sl_global* sl_seat_global_create(struct sl_seat* seat);
 
+struct sl_global* sl_relative_pointer_manager_global_create(
+    struct sl_context* ctx);
+
 struct sl_global* sl_data_device_manager_global_create(struct sl_context* ctx);
 
 struct sl_global* sl_viewporter_global_create(struct sl_context* ctx);
@@ -471,6 +529,8 @@ struct sl_global* sl_gtk_shell_global_create(struct sl_context* ctx);
 struct sl_global* sl_drm_global_create(struct sl_context* ctx);
 
 struct sl_global* sl_text_input_manager_global_create(struct sl_context* ctx);
+
+struct sl_global* sl_pointer_constraints_global_create(struct sl_context* ctx);
 
 void sl_set_display_implementation(struct sl_context* ctx);
 

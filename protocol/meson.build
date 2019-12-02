@@ -9,14 +9,16 @@ else
 endif
 
 protocols = [
-	'aura-shell.xml',
-	'drm.xml',
-	'gtk-shell.xml',
-	'keyboard-extension-unstable-v1.xml',
-	'linux-dmabuf-unstable-v1.xml',
-	'text-input-unstable-v1.xml',
-	'viewporter.xml',
-	'xdg-shell-unstable-v6.xml',
+    'aura-shell.xml',
+    'drm.xml',
+    'gtk-shell.xml',
+    'keyboard-extension-unstable-v1.xml',
+    'linux-dmabuf-unstable-v1.xml',
+    'pointer-constraints-unstable-v1.xml',
+    'relative-pointer-unstable-v1.xml',
+    'text-input-unstable-v1.xml',
+    'viewporter.xml',
+    'xdg-shell-unstable-v6.xml',
 ]
 
 wl_protos_src = []

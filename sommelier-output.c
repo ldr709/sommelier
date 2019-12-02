@@ -15,11 +15,20 @@
 
 #define INCH_IN_MM 25.4
 
+// Legacy X11 applications use DPI to decide on their scale. This value is what
+// the convention for a "normal" scale is. One way to verify the convention is
+// to note the DPI of a typical monitor circa ~2005, i.e. 20" 1080p.
+#define DEFACTO_DPI 96
+
 double sl_output_aura_scale_factor_to_double(int scale_factor) {
   // Aura scale factor is an enum that for all currently know values
   // is a scale value multipled by 1000. For example, enum value for
   // 1.25 scale factor is 1250.
   return scale_factor / 1000.0;
+}
+
+int dpi_to_physical_mm(double dpi, int px) {
+  return px * (INCH_IN_MM / dpi);
 }
 
 void sl_output_get_host_output_state(struct sl_host_output* host,
@@ -28,60 +37,95 @@ void sl_output_get_host_output_state(struct sl_host_output* host,
                                      int* physical_height,
                                      int* width,
                                      int* height) {
-  double preferred_scale =
-      sl_output_aura_scale_factor_to_double(host->preferred_scale);
+  // The user's chosen zoom level.
   double current_scale =
       sl_output_aura_scale_factor_to_double(host->current_scale);
-  double ideal_scale_factor = 1.0;
-  double scale_factor = host->scale_factor;
 
-  // Use the scale factor we received from aura shell protocol when available.
-  if (host->ctx->aura_shell) {
-    double device_scale_factor =
-        sl_output_aura_scale_factor_to_double(host->device_scale_factor);
+  // The scale applied to a screen at the default zoom. I.e. this value
+  // determines the meaning of "100%" zoom, and how zoom relates to the
+  // apparent resolution:
+  //
+  //    apparent_res = native_res / device_scale_factor * current_scale
+  //
+  // e.g.: On a device with a DSF of 2.0, 80% zoom really means "apply 1.6x
+  // scale", and 50% zoom would give you an apparent resolution equal to the
+  // native one.
+  double device_scale_factor =
+      sl_output_aura_scale_factor_to_double(host->device_scale_factor);
 
-    ideal_scale_factor = device_scale_factor * preferred_scale;
-    scale_factor = device_scale_factor * current_scale;
+  // Optimistically, we will try to apply the scale that the user chose.
+  // Failing that, we will use the scale set for this wl_output.
+  double applied_scale = device_scale_factor * current_scale;
+  if (!host->ctx->aura_shell) {
+    applied_scale = host->scale_factor;
   }
 
-  // Always use scale=1 and adjust geometry and mode based on ideal
-  // scale factor for Xwayland client. For other clients, pick an optimal
-  // scale and adjust geometry and mode based on it.
+  int target_dpi = DEFACTO_DPI;
   if (host->ctx->xwayland) {
+    // For X11, we must fix the scale to be 1 (since X apps typically can't
+    // handle scaling). As a result, we adjust the resolution (based on the
+    // scale we want to apply and sommelier's configuration) and the physical
+    // dimensions (based on what DPI we want the applications to use). E.g.:
+    //  - Device scale is 1.25x, with 1920x1080 resolution on a 295mm by 165mm
+    //    screen.
+    //  - User chosen zoom is 130%
+    //  - Sommelier is scaled to 0.5 (a.k.a low density). Since ctx->scale also
+    //    has the device scale, it will be 0.625 (i.e. 0.5 * 1.25).
+    //  - We want the DPI to be 120 (i.e. 96 * 1.25)
+    //     - Meaning 0.21 mm/px
+    //  - We report resolution 738x415 (1920x1080 * 0.5 / 1.3)
+    //  - We report dimensions 155mm by 87mm (738x415 * 0.21)
+    // This is mostly expected, another way of thinking about them is that zoom
+    // and scale modify the application's understanding of length:
+    //  - Increasing the zoom makes lengths appear longer (i.e. fewer mm to work
+    //    with over the same real length).
+    //  - Scaling the screen does the inverse.
     if (scale)
       *scale = 1;
-    *physical_width = host->physical_width * ideal_scale_factor / scale_factor;
-    *physical_height =
-        host->physical_height * ideal_scale_factor / scale_factor;
-    *width = host->width * host->ctx->scale / scale_factor;
-    *height = host->height * host->ctx->scale / scale_factor;
+    *width = host->width * host->ctx->scale / applied_scale;
+    *height = host->height * host->ctx->scale / applied_scale;
+
+    target_dpi = DEFACTO_DPI * device_scale_factor;
+    *physical_width = dpi_to_physical_mm(target_dpi, *width);
+    *physical_height = dpi_to_physical_mm(target_dpi, *height);
   } else {
-    int s = MIN(ceil(scale_factor / host->ctx->scale), MAX_OUTPUT_SCALE);
+    // For wayland, we directly apply the scale which combines the user's chosen
+    // preference (from aura) and the scale which this sommelier was configured
+    // for (i.e. based on ctx->scale, which comes from the env/cmd line).
+    //
+    // See above comment: ctx->scale already has the device_scale_factor in it,
+    // so this maths actually looks like:
+    //
+    //              applied / ctx->scale
+    //      = (current*DSF) / (config*DSF)
+    //      =       current / config
+    //
+    // E.g. if we configured sommelier to scale everything 0.5x, and the user
+    // has chosen 130% zoom, we are applying 2.6x scale factor.
+    int s = MIN(ceil(applied_scale / host->ctx->scale), MAX_OUTPUT_SCALE);
 
     if (scale)
       *scale = s;
     *physical_width = host->physical_width;
     *physical_height = host->physical_height;
-    *width = host->width * host->ctx->scale * s / scale_factor;
-    *height = host->height * host->ctx->scale * s / scale_factor;
+    *width = host->width * host->ctx->scale * s / applied_scale;
+    *height = host->height * host->ctx->scale * s / applied_scale;
+    target_dpi = (*width * INCH_IN_MM) / *physical_width;
   }
 
   if (host->ctx->dpi.size) {
-    int dpi = (*width * INCH_IN_MM) / *physical_width;
     int adjusted_dpi = *((int*)host->ctx->dpi.data);
-    double mmpd;
     int* p;
 
+    // Choose the DPI bucket which is closest to the target DPI which we
+    // calculated above.
     wl_array_for_each(p, &host->ctx->dpi) {
-      if (*p > dpi)
-        break;
-
-      adjusted_dpi = *p;
+      if (abs(*p - target_dpi) < abs(adjusted_dpi - target_dpi))
+        adjusted_dpi = *p;
     }
 
-    mmpd = INCH_IN_MM / adjusted_dpi;
-    *physical_width = *width * mmpd + 0.5;
-    *physical_height = *height * mmpd + 0.5;
+    *physical_width = dpi_to_physical_mm(adjusted_dpi, *width);
+    *physical_height = dpi_to_physical_mm(adjusted_dpi, *height);
   }
 }
 
@@ -200,49 +244,6 @@ static void sl_aura_output_scale(void* data,
                                  uint32_t flags,
                                  uint32_t scale) {
   struct sl_host_output* host = zaura_output_get_user_data(output);
-
-  switch (scale) {
-    case ZAURA_OUTPUT_SCALE_FACTOR_0400:
-    case ZAURA_OUTPUT_SCALE_FACTOR_0500:
-    case ZAURA_OUTPUT_SCALE_FACTOR_0550:
-    case ZAURA_OUTPUT_SCALE_FACTOR_0600:
-    case ZAURA_OUTPUT_SCALE_FACTOR_0625:
-    case ZAURA_OUTPUT_SCALE_FACTOR_0650:
-    case ZAURA_OUTPUT_SCALE_FACTOR_0700:
-    case ZAURA_OUTPUT_SCALE_FACTOR_0750:
-    case ZAURA_OUTPUT_SCALE_FACTOR_0800:
-    case ZAURA_OUTPUT_SCALE_FACTOR_0850:
-    case ZAURA_OUTPUT_SCALE_FACTOR_0900:
-    case ZAURA_OUTPUT_SCALE_FACTOR_0950:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1000:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1050:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1100:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1150:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1125:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1200:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1250:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1300:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1400:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1450:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1500:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1600:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1750:
-    case ZAURA_OUTPUT_SCALE_FACTOR_1800:
-    case ZAURA_OUTPUT_SCALE_FACTOR_2000:
-    case ZAURA_OUTPUT_SCALE_FACTOR_2200:
-    case ZAURA_OUTPUT_SCALE_FACTOR_2250:
-    case ZAURA_OUTPUT_SCALE_FACTOR_2500:
-    case ZAURA_OUTPUT_SCALE_FACTOR_2750:
-    case ZAURA_OUTPUT_SCALE_FACTOR_3000:
-    case ZAURA_OUTPUT_SCALE_FACTOR_3500:
-    case ZAURA_OUTPUT_SCALE_FACTOR_4000:
-    case ZAURA_OUTPUT_SCALE_FACTOR_4500:
-    case ZAURA_OUTPUT_SCALE_FACTOR_5000:
-      break;
-    default:
-      fprintf(stderr, "warning: unknown scale factor: %d\n", scale);
-      break;
-  }
 
   if (flags & ZAURA_OUTPUT_SCALE_PROPERTY_CURRENT)
     host->current_scale = scale;
