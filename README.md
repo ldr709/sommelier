@@ -1,4 +1,6 @@
-# Local Changes
+# Fork README
+
+This runs a nested Wayland compositor that presents unscaled pixels to a new XWayland instance. Programs run under this X session look sharp. You can also use it with X11 or wayland programs for per-app scaling.
 
 ## To build
 
