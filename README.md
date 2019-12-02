@@ -1,6 +1,6 @@
-# Fork README
+# Notes for this Fork
 
-This runs a nested Wayland compositor that presents unscaled pixels to a new XWayland instance. Programs run under this X session look sharp. You can also use it with X11 or wayland programs for per-app scaling.
+This runs a nested Wayland compositor that presents unscaled pixels to a new XWayland instance. Programs run under this X session look sharp. You can use it to achive per-app scaling with both X11 and native wayland clients.
 
 ## To build
 
