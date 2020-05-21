@@ -1,8 +1,13 @@
 #ifndef _LINUX_VIRTWL_H
 #define _LINUX_VIRTWL_H
 
+#ifdef __linux__
 #include <asm/ioctl.h>
 #include <linux/types.h>
+#elif defined(__FreeBSD__)
+#include <infiniband/types.h>
+#include <sys/signal.h>
+#endif
 
 #define VIRTWL_SEND_MAX_ALLOCS 28
 
