@@ -31,7 +31,7 @@ struct sl_shell;
 struct sl_data_device_manager;
 struct sl_data_offer;
 struct sl_data_source;
-struct sl_xdg_wm_base;
+struct sl_xdg_shell;
 struct sl_subcompositor;
 struct sl_aura_shell;
 struct sl_viewporter;
@@ -99,7 +99,7 @@ struct sl_context {
   struct sl_shm* shm;
   struct sl_shell* shell;
   struct sl_data_device_manager* data_device_manager;
-  struct sl_xdg_wm_base* xdg_wm_base;
+  struct sl_xdg_shell* xdg_shell;
   struct sl_aura_shell* aura_shell;
   struct sl_viewporter* viewporter;
   struct sl_linux_dmabuf* linux_dmabuf;
@@ -149,6 +149,7 @@ struct sl_context {
   int clipboard_manager;
   uint32_t frame_color;
   uint32_t dark_frame_color;
+  int fullscreen_mode;
   struct sl_host_seat* default_seat;
   xcb_window_t selection_window;
   xcb_window_t selection_owner;
@@ -208,6 +209,9 @@ struct sl_host_pointer {
   struct wl_resource* focus_resource;
   struct wl_listener focus_resource_listener;
   uint32_t focus_serial;
+  uint32_t time;
+  wl_fixed_t axis_delta[2];
+  int32_t axis_discrete[2];
 };
 
 struct sl_relative_pointer_manager {
@@ -373,10 +377,9 @@ struct sl_viewporter {
   struct wp_viewporter* internal;
 };
 
-struct sl_xdg_wm_base {
+struct sl_xdg_shell {
   struct sl_context* ctx;
   uint32_t id;
-  uint32_t version;
   struct sl_global* host_global;
   struct xdg_wm_base* internal;
 };
@@ -471,6 +474,7 @@ struct sl_window {
   char* startup_id;
   int dark_frame;
   uint32_t size_flags;
+  int focus_model_take_focus;
   int min_width;
   int min_height;
   int max_width;
@@ -523,7 +527,7 @@ struct sl_global* sl_data_device_manager_global_create(struct sl_context* ctx);
 
 struct sl_global* sl_viewporter_global_create(struct sl_context* ctx);
 
-struct sl_global* sl_xdg_wm_base_global_create(struct sl_context* ctx);
+struct sl_global* sl_xdg_shell_global_create(struct sl_context* ctx);
 
 struct sl_global* sl_gtk_shell_global_create(struct sl_context* ctx);
 

@@ -37,6 +37,15 @@
 #include "viewporter-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
+#define errno_assert(rv)                                          \
+  {                                                               \
+    int macro_private_assert_value = (rv);                        \
+    if (!macro_private_assert_value) {                            \
+      fprintf(stderr, "Unexpected error: %s\n", strerror(errno)); \
+      assert(false);                                              \
+    }                                                             \
+  }
+
 // Check that required macro definitions exist.
 #ifndef XWAYLAND_PATH
 #error XWAYLAND_PATH must be defined
@@ -74,6 +83,7 @@ enum {
   PROPERTY_WM_TRANSIENT_FOR,
   PROPERTY_WM_NORMAL_HINTS,
   PROPERTY_WM_CLIENT_LEADER,
+  PROPERTY_WM_PROTOCOLS,
   PROPERTY_MOTIF_WM_HINTS,
   PROPERTY_NET_STARTUP_ID,
   PROPERTY_NET_WM_STATE,
@@ -193,7 +203,7 @@ struct sl_mwm_hints {
   APPLICATION_ID_FORMAT_PREFIX ".wmclass.%s"
 
 #define MIN_AURA_SHELL_VERSION 6
-#define MAX_AURA_SHELL_VERSION 9
+#define MAX_AURA_SHELL_VERSION 10
 
 // Performs an asprintf operation and checks the result for validity and calls
 // abort() if there's a failure. Returns a newly allocated string rather than
@@ -239,7 +249,7 @@ struct sl_mmap* sl_mmap_create(int fd,
   map->buffer_resource = NULL;
   map->addr =
       mmap(NULL, size + offset0, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  assert(map->addr != MAP_FAILED);
+  errno_assert(map->addr != MAP_FAILED);
 
   return map;
 }
@@ -252,7 +262,8 @@ struct sl_mmap* sl_mmap_ref(struct sl_mmap* map) {
 void sl_mmap_unref(struct sl_mmap* map) {
   if (map->refcount-- == 1) {
     munmap(map->addr, map->size + map->offset[0]);
-    close(map->fd);
+    if (map->fd != -1)
+      close(map->fd);
     free(map);
   }
 }
@@ -272,14 +283,14 @@ void sl_sync_point_destroy(struct sl_sync_point* sync_point) {
   free(sync_point);
 }
 
-static void sl_internal_xdg_wm_base_ping(void* data,
-                                       struct xdg_wm_base* xdg_wm_base,
+static void sl_internal_xdg_shell_ping(void* data,
+                                       struct xdg_wm_base* xdg_shell,
                                        uint32_t serial) {
-  xdg_wm_base_pong(xdg_wm_base, serial);
+  xdg_wm_base_pong(xdg_shell, serial);
 }
 
-static const struct xdg_wm_base_listener sl_internal_xdg_wm_base_listener = {
-    sl_internal_xdg_wm_base_ping};
+static const struct xdg_wm_base_listener sl_internal_xdg_shell_listener = {
+    sl_internal_xdg_shell_ping};
 
 static void sl_send_configure_notify(struct sl_window* window) {
   xcb_configure_notify_event_t event = {
@@ -392,8 +403,10 @@ static void sl_set_input_focus(struct sl_context* ctx,
     if (!window->managed)
       return;
 
-    xcb_send_event(ctx->connection, 0, window->id,
-                   XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT, (char*)&event);
+    if (window->focus_model_take_focus) {
+      xcb_send_event(ctx->connection, 0, window->id, XCB_EVENT_MASK_NO_EVENT,
+                     (char*)&event);
+    }
 
     xcb_set_input_focus(ctx->connection, XCB_INPUT_FOCUS_NONE, window->id,
                         XCB_CURRENT_TIME);
@@ -453,8 +466,9 @@ int sl_process_pending_configure_acks(struct sl_window* window,
   return 1;
 }
 
-static void sl_internal_xdg_surface_configure(
-    void* data, struct xdg_surface* xdg_surface, uint32_t serial) {
+static void sl_internal_xdg_surface_configure(void* data,
+                                              struct xdg_surface* xdg_surface,
+                                              uint32_t serial) {
   struct sl_window* window = xdg_surface_get_user_data(xdg_surface);
 
   window->next_config.serial = serial;
@@ -476,8 +490,8 @@ static void sl_internal_xdg_surface_configure(
   }
 }
 
-static const struct xdg_surface_listener sl_internal_xdg_surface_listener =
-    {sl_internal_xdg_surface_configure};
+static const struct xdg_surface_listener sl_internal_xdg_surface_listener = {
+    sl_internal_xdg_surface_configure};
 
 static void sl_internal_xdg_toplevel_configure(
     void* data,
@@ -544,8 +558,8 @@ static void sl_internal_xdg_toplevel_configure(
   window->next_config.states_length = i;
 }
 
-static void sl_internal_xdg_toplevel_close(
-    void* data, struct xdg_toplevel* xdg_toplevel) {
+static void sl_internal_xdg_toplevel_close(void* data,
+                                           struct xdg_toplevel* xdg_toplevel) {
   struct sl_window* window = xdg_toplevel_get_user_data(xdg_toplevel);
   xcb_client_message_event_t event = {
       .response_type = XCB_CLIENT_MESSAGE,
@@ -563,9 +577,8 @@ static void sl_internal_xdg_toplevel_close(
                  XCB_EVENT_MASK_NO_EVENT, (const char*)&event);
 }
 
-static const struct xdg_toplevel_listener
-    sl_internal_xdg_toplevel_listener = {sl_internal_xdg_toplevel_configure,
-                                         sl_internal_xdg_toplevel_close};
+static const struct xdg_toplevel_listener sl_internal_xdg_toplevel_listener = {
+    sl_internal_xdg_toplevel_configure, sl_internal_xdg_toplevel_close};
 
 static void sl_internal_xdg_popup_configure(void* data,
                                             struct xdg_popup* xdg_popup,
@@ -664,8 +677,8 @@ void sl_window_update(struct sl_window* window) {
   assert(host_surface);
   assert(!host_surface->has_role);
 
-  assert(ctx->xdg_wm_base);
-  assert(ctx->xdg_wm_base->internal);
+  assert(ctx->xdg_shell);
+  assert(ctx->xdg_shell->internal);
 
   if (window->managed) {
     if (window->transient_for != XCB_WINDOW_NONE) {
@@ -727,8 +740,8 @@ void sl_window_update(struct sl_window* window) {
   }
 
   if (!window->xdg_surface) {
-    window->xdg_surface = xdg_wm_base_get_xdg_surface(
-        ctx->xdg_wm_base->internal, host_surface->proxy);
+    window->xdg_surface = xdg_wm_base_get_xdg_surface(ctx->xdg_shell->internal,
+                                                      host_surface->proxy);
     xdg_surface_set_user_data(window->xdg_surface, window);
     xdg_surface_add_listener(window->xdg_surface,
                              &sl_internal_xdg_surface_listener, window);
@@ -743,18 +756,22 @@ void sl_window_update(struct sl_window* window) {
     }
 
     zaura_surface_set_frame(window->aura_surface,
-                            window->decorated
-                                ? ZAURA_SURFACE_FRAME_TYPE_NORMAL
-                                : window->depth == 32
-                                      ? ZAURA_SURFACE_FRAME_TYPE_NONE
-                                      : ZAURA_SURFACE_FRAME_TYPE_SHADOW);
+                            window->decorated ? ZAURA_SURFACE_FRAME_TYPE_NORMAL
+                            : window->depth == 32
+                                ? ZAURA_SURFACE_FRAME_TYPE_NONE
+                                : ZAURA_SURFACE_FRAME_TYPE_SHADOW);
 
     frame_color = window->dark_frame ? ctx->dark_frame_color : ctx->frame_color;
     zaura_surface_set_frame_colors(window->aura_surface, frame_color,
                                    frame_color);
     zaura_surface_set_startup_id(window->aura_surface, window->startup_id);
-
     sl_update_application_id(ctx, window);
+
+    if (ctx->aura_shell->version >=
+        ZAURA_SURFACE_SET_FULLSCREEN_MODE_SINCE_VERSION) {
+      zaura_surface_set_fullscreen_mode(window->aura_surface,
+                                        ctx->fullscreen_mode);
+    }
   }
 
   // Always use top-level surface for X11 windows as we can't control when the
@@ -764,7 +781,7 @@ void sl_window_update(struct sl_window* window) {
       window->xdg_toplevel = xdg_surface_get_toplevel(window->xdg_surface);
       xdg_toplevel_set_user_data(window->xdg_toplevel, window);
       xdg_toplevel_add_listener(window->xdg_toplevel,
-                                    &sl_internal_xdg_toplevel_listener, window);
+                                &sl_internal_xdg_toplevel_listener, window);
     }
     if (parent)
       xdg_toplevel_set_parent(window->xdg_toplevel, parent->xdg_toplevel);
@@ -772,13 +789,13 @@ void sl_window_update(struct sl_window* window) {
       xdg_toplevel_set_title(window->xdg_toplevel, window->name);
     if (window->size_flags & P_MIN_SIZE) {
       xdg_toplevel_set_min_size(window->xdg_toplevel,
-                                    window->min_width / ctx->scale,
-                                    window->min_height / ctx->scale);
+                                window->min_width / ctx->scale,
+                                window->min_height / ctx->scale);
     }
     if (window->size_flags & P_MAX_SIZE) {
       xdg_toplevel_set_max_size(window->xdg_toplevel,
-                                    window->max_width / ctx->scale,
-                                    window->max_height / ctx->scale);
+                                window->max_width / ctx->scale,
+                                window->max_height / ctx->scale);
     }
     if (window->maximized) {
       xdg_toplevel_set_maximized(window->xdg_toplevel);
@@ -786,23 +803,19 @@ void sl_window_update(struct sl_window* window) {
   } else if (!window->xdg_popup) {
     struct xdg_positioner* positioner;
 
-    positioner = xdg_wm_base_create_positioner(ctx->xdg_wm_base->internal);
+    positioner = xdg_wm_base_create_positioner(ctx->xdg_shell->internal);
     assert(positioner);
-    xdg_positioner_set_anchor(
-        positioner,
-        XDG_POSITIONER_ANCHOR_TOP | XDG_POSITIONER_ANCHOR_LEFT);
-    xdg_positioner_set_gravity(
-        positioner,
-        XDG_POSITIONER_GRAVITY_BOTTOM | XDG_POSITIONER_GRAVITY_RIGHT);
-    xdg_positioner_set_anchor_rect(
-        positioner, (window->x - parent->x) / ctx->scale,
-        (window->y - parent->y) / ctx->scale, 1, 1);
+    xdg_positioner_set_anchor(positioner, XDG_POSITIONER_ANCHOR_TOP_LEFT);
+    xdg_positioner_set_gravity(positioner, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
+    xdg_positioner_set_anchor_rect(positioner,
+                                   (window->x - parent->x) / ctx->scale,
+                                   (window->y - parent->y) / ctx->scale, 1, 1);
 
-    window->xdg_popup = xdg_surface_get_popup(
-        window->xdg_surface, parent->xdg_surface, positioner);
+    window->xdg_popup = xdg_surface_get_popup(window->xdg_surface,
+                                              parent->xdg_surface, positioner);
     xdg_popup_set_user_data(window->xdg_popup, window);
-    xdg_popup_add_listener(window->xdg_popup,
-                               &sl_internal_xdg_popup_listener, window);
+    xdg_popup_add_listener(window->xdg_popup, &sl_internal_xdg_popup_listener,
+                           window);
 
     xdg_positioner_destroy(positioner);
   }
@@ -1169,22 +1182,21 @@ static void sl_registry_handler(void* data,
           sl_data_device_manager_global_create(ctx);
     }
   } else if (strcmp(interface, "xdg_wm_base") == 0) {
-    struct sl_xdg_wm_base* xdg_wm_base = malloc(sizeof(struct sl_xdg_wm_base));
-    assert(xdg_wm_base);
-    xdg_wm_base->ctx = ctx;
-    xdg_wm_base->id = id;
-    xdg_wm_base->version = MIN(2, version);
-    xdg_wm_base->internal = NULL;
-    xdg_wm_base->host_global = NULL;
-    assert(!ctx->xdg_wm_base);
-    ctx->xdg_wm_base = xdg_wm_base;
+    struct sl_xdg_shell* xdg_shell = malloc(sizeof(struct sl_xdg_shell));
+    assert(xdg_shell);
+    xdg_shell->ctx = ctx;
+    xdg_shell->id = id;
+    xdg_shell->internal = NULL;
+    xdg_shell->host_global = NULL;
+    assert(!ctx->xdg_shell);
+    ctx->xdg_shell = xdg_shell;
     if (ctx->xwayland) {
-      xdg_wm_base->internal =
+      xdg_shell->internal =
           wl_registry_bind(registry, id, &xdg_wm_base_interface, 1);
-      xdg_wm_base_add_listener(xdg_wm_base->internal,
-                                 &sl_internal_xdg_wm_base_listener, NULL);
+      xdg_wm_base_add_listener(xdg_shell->internal,
+                               &sl_internal_xdg_shell_listener, NULL);
     } else {
-      xdg_wm_base->host_global = sl_xdg_wm_base_global_create(ctx);
+      xdg_shell->host_global = sl_xdg_shell_global_create(ctx);
     }
   } else if (strcmp(interface, "zaura_shell") == 0) {
     if (version >= MIN_AURA_SHELL_VERSION) {
@@ -1291,13 +1303,13 @@ static void sl_registry_remover(void* data,
     ctx->data_device_manager = NULL;
     return;
   }
-  if (ctx->xdg_wm_base && ctx->xdg_wm_base->id == id) {
-    if (ctx->xdg_wm_base->host_global)
-      sl_global_destroy(ctx->xdg_wm_base->host_global);
-    if (ctx->xdg_wm_base->internal)
-      xdg_wm_base_destroy(ctx->xdg_wm_base->internal);
-    free(ctx->xdg_wm_base);
-    ctx->xdg_wm_base = NULL;
+  if (ctx->xdg_shell && ctx->xdg_shell->id == id) {
+    if (ctx->xdg_shell->host_global)
+      sl_global_destroy(ctx->xdg_shell->host_global);
+    if (ctx->xdg_shell->internal)
+      xdg_wm_base_destroy(ctx->xdg_shell->internal);
+    free(ctx->xdg_shell);
+    ctx->xdg_shell = NULL;
     return;
   }
   if (ctx->aura_shell && ctx->aura_shell->id == id) {
@@ -1429,6 +1441,7 @@ static void sl_create_window(struct sl_context* ctx,
   window->startup_id = NULL;
   window->dark_frame = 0;
   window->size_flags = P_POSITION;
+  window->focus_model_take_focus = 0;
   window->min_width = 0;
   window->min_height = 0;
   window->max_width = 0;
@@ -1600,6 +1613,7 @@ static void sl_handle_map_request(struct sl_context* ctx,
       {PROPERTY_WM_TRANSIENT_FOR, XCB_ATOM_WM_TRANSIENT_FOR},
       {PROPERTY_WM_NORMAL_HINTS, XCB_ATOM_WM_NORMAL_HINTS},
       {PROPERTY_WM_CLIENT_LEADER, ctx->atoms[ATOM_WM_CLIENT_LEADER].value},
+      {PROPERTY_WM_PROTOCOLS, ctx->atoms[ATOM_WM_PROTOCOLS].value},
       {PROPERTY_MOTIF_WM_HINTS, ctx->atoms[ATOM_MOTIF_WM_HINTS].value},
       {PROPERTY_NET_STARTUP_ID, ctx->atoms[ATOM_NET_STARTUP_ID].value},
       {PROPERTY_NET_WM_STATE, ctx->atoms[ATOM_NET_WM_STATE].value},
@@ -1617,7 +1631,8 @@ static void sl_handle_map_request(struct sl_context* ctx,
   if (!window)
     return;
 
-  assert(!sl_is_our_window(ctx, event->window));
+  if (sl_is_our_window(ctx, event->window))
+    return;
 
   window->managed = 1;
   if (window->frame_id == XCB_WINDOW_NONE)
@@ -1686,6 +1701,15 @@ static void sl_handle_map_request(struct sl_context* ctx,
       case PROPERTY_WM_CLIENT_LEADER:
         if (xcb_get_property_value_length(reply) >= 4)
           window->client_leader = *((uint32_t*)xcb_get_property_value(reply));
+        break;
+      case PROPERTY_WM_PROTOCOLS:
+        reply_atoms = xcb_get_property_value(reply);
+        for (i = 0;
+             i < xcb_get_property_value_length(reply) / sizeof(xcb_atom_t);
+             ++i) {
+          if (reply_atoms[i] == ctx->atoms[ATOM_WM_TAKE_FOCUS].value)
+            window->focus_model_take_focus = 1;
+        }
         break;
       case PROPERTY_MOTIF_WM_HINTS:
         if (xcb_get_property_value_length(reply) >= sizeof(mwm_hints))
@@ -1878,7 +1902,8 @@ static void sl_handle_configure_request(struct sl_context* ctx,
   int height = window->height;
   uint32_t values[7];
 
-  assert(!sl_is_our_window(ctx, event->window));
+  if (sl_is_our_window(ctx, event->window))
+    return;
 
   if (!window->managed) {
     int i = 0;
@@ -2100,7 +2125,7 @@ static void sl_handle_client_message(struct sl_context* ctx,
 
       if (event->data.data32[2] == NET_WM_MOVERESIZE_MOVE) {
         xdg_toplevel_move(window->xdg_toplevel, seat->proxy,
-                              seat->seat->last_serial);
+                          seat->seat->last_serial);
       } else {
         uint32_t edge = sl_resize_edge(event->data.data32[2]);
 
@@ -2108,7 +2133,7 @@ static void sl_handle_client_message(struct sl_context* ctx,
           return;
 
         xdg_toplevel_resize(window->xdg_toplevel, seat->proxy,
-                                seat->seat->last_serial, edge);
+                            seat->seat->last_serial, edge);
       }
     }
   } else if (event->type == ctx->atoms[ATOM_NET_WM_STATE].value) {
@@ -2183,8 +2208,7 @@ int sl_begin_data_source_send(struct sl_context* ctx,
 
   flags = fcntl(fd, F_GETFL, 0);
   rv = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-  assert(!rv);
-  UNUSED(rv);
+  errno_assert(!rv);
 
   ctx->selection_data_source_send_fd = fd;
   free(reply);
@@ -2429,16 +2453,16 @@ static void sl_handle_property_notify(struct sl_context* ctx,
 
     if (window->size_flags & P_MIN_SIZE) {
       xdg_toplevel_set_min_size(window->xdg_toplevel,
-                                    window->min_width / ctx->scale,
-                                    window->min_height / ctx->scale);
+                                window->min_width / ctx->scale,
+                                window->min_height / ctx->scale);
     } else {
       xdg_toplevel_set_min_size(window->xdg_toplevel, 0, 0);
     }
 
     if (window->size_flags & P_MAX_SIZE) {
       xdg_toplevel_set_max_size(window->xdg_toplevel,
-                                    window->max_width / ctx->scale,
-                                    window->max_height / ctx->scale);
+                                window->max_width / ctx->scale,
+                                window->max_height / ctx->scale);
     } else {
       xdg_toplevel_set_max_size(window->xdg_toplevel, 0, 0);
     }
@@ -2494,11 +2518,10 @@ static void sl_handle_property_notify(struct sl_context* ctx,
       return;
 
     zaura_surface_set_frame(window->aura_surface,
-                            window->decorated
-                                ? ZAURA_SURFACE_FRAME_TYPE_NORMAL
-                                : window->depth == 32
-                                      ? ZAURA_SURFACE_FRAME_TYPE_NONE
-                                      : ZAURA_SURFACE_FRAME_TYPE_SHADOW);
+                            window->decorated ? ZAURA_SURFACE_FRAME_TYPE_NORMAL
+                            : window->depth == 32
+                                ? ZAURA_SURFACE_FRAME_TYPE_NONE
+                                : ZAURA_SURFACE_FRAME_TYPE_SHADOW);
   } else if (event->atom == ctx->atoms[ATOM_GTK_THEME_VARIANT].value) {
     struct sl_window* window;
     uint32_t frame_color;
@@ -2810,7 +2833,7 @@ static void sl_send_data(struct sl_context* ctx, xcb_atom_t data_type) {
       int p[2];
 
       rv = pipe2(p, O_CLOEXEC | O_NONBLOCK);
-      assert(!rv);
+      errno_assert(!rv);
 
       fd_to_receive = p[0];
       fd_to_wayland = p[1];
@@ -2915,8 +2938,11 @@ static int sl_handle_x_connection_event(int fd, uint32_t mask, void* data) {
   xcb_generic_event_t* event;
   uint32_t count = 0;
 
-  if ((mask & WL_EVENT_HANGUP) || (mask & WL_EVENT_ERROR))
-    return 0;
+  if ((mask & WL_EVENT_HANGUP) || (mask & WL_EVENT_ERROR)) {
+    fprintf(stderr, "Got error or hangup (mask %d) on X connection, exiting\n",
+            mask);
+    exit(EXIT_SUCCESS);
+  }
 
   while ((event = xcb_poll_for_event(ctx->connection))) {
     switch (event->response_type & ~SEND_EVENT_MASK) {
@@ -3153,7 +3179,7 @@ static void sl_sd_notify(const char* state) {
   assert(socket_name);
 
   fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-  assert(fd >= 0);
+  errno_assert(fd >= 0);
 
   memset(&addr, 0, sizeof(addr));
   addr.sun_family = AF_UNIX;
@@ -3171,8 +3197,7 @@ static void sl_sd_notify(const char* state) {
   msghdr.msg_iovlen = 1;
 
   rv = sendmsg(fd, &msghdr, MSG_NOSIGNAL);
-  assert(rv != -1);
-  UNUSED(rv);
+  errno_assert(rv != -1);
 }
 
 static int sl_handle_sigchld(int signal_number, void* data) {
@@ -3267,8 +3292,13 @@ static int sl_handle_display_ready_event(int fd, uint32_t mask, void* data) {
   int bytes_read = 0;
   pid_t pid;
 
-  if (!(mask & WL_EVENT_READABLE))
-    return 0;
+  if (!(mask & WL_EVENT_READABLE)) {
+    fprintf(stderr,
+            "Got error or hangup on display ready connection"
+            " (mask %d), exiting\n",
+            mask);
+    exit(EXIT_SUCCESS);
+  }
 
   display_name[0] = ':';
   do {
@@ -3304,7 +3334,7 @@ static int sl_handle_display_ready_event(int fd, uint32_t mask, void* data) {
                       (int)(XCURSOR_SIZE_BASE * ctx->scale + 0.5)));
 
   pid = fork();
-  assert(pid >= 0);
+  errno_assert(pid >= 0);
   if (pid == 0) {
     sl_execvp(ctx->runprog[0], ctx->runprog, -1);
     _exit(EXIT_FAILURE);
@@ -3336,6 +3366,14 @@ static int sl_handle_virtwl_ctx_event(int fd, uint32_t mask, void* data) {
   ssize_t bytes;
   int fd_count;
   int rv;
+
+  if (!(mask & WL_EVENT_READABLE)) {
+    fprintf(stderr,
+            "Got error or hangup on virtwl ctx fd"
+            " (mask %d), exiting\n",
+            mask);
+    exit(EXIT_SUCCESS);
+  }
 
   ioctl_recv->len = max_recv_size;
   rv = ioctl(fd, VIRTWL_IOCTL_RECV, ioctl_recv);
@@ -3373,8 +3411,7 @@ static int sl_handle_virtwl_ctx_event(int fd, uint32_t mask, void* data) {
   }
 
   bytes = sendmsg(ctx->virtwl_socket_fd, &msg, MSG_NOSIGNAL);
-  assert(bytes == ioctl_recv->len);
-  UNUSED(bytes);
+  errno_assert(bytes == ioctl_recv->len);
 
   while (fd_count--)
     close(ioctl_recv->fds[fd_count]);
@@ -3397,6 +3434,14 @@ static int sl_handle_virtwl_socket_event(int fd, uint32_t mask, void* data) {
   int rv;
   int i;
 
+  if (!(mask & WL_EVENT_READABLE)) {
+    fprintf(stderr,
+            "Got error or hangup on virtwl socket"
+            " (mask %d), exiting\n",
+            mask);
+    exit(EXIT_SUCCESS);
+  }
+
   buffer_iov.iov_base = send_data;
   buffer_iov.iov_len = max_send_size;
 
@@ -3406,7 +3451,7 @@ static int sl_handle_virtwl_socket_event(int fd, uint32_t mask, void* data) {
   msg.msg_controllen = sizeof(fd_buffer);
 
   bytes = recvmsg(ctx->virtwl_socket_fd, &msg, 0);
-  assert(bytes > 0);
+  errno_assert(bytes > 0);
 
   // If there were any FDs recv'd by recvmsg, there will be some data in the
   // msg_control buffer. To get the FDs out we iterate all cmsghdr's within and
@@ -3434,8 +3479,7 @@ static int sl_handle_virtwl_socket_event(int fd, uint32_t mask, void* data) {
   // structure which we now pass along to the kernel.
   ioctl_send->len = bytes;
   rv = ioctl(ctx->virtwl_ctx_fd, VIRTWL_IOCTL_SEND, ioctl_send);
-  assert(!rv);
-  UNUSED(rv);
+  errno_assert(!rv);
 
   while (fd_count--)
     close(ioctl_send->fds[fd_count]);
@@ -3508,7 +3552,9 @@ static void sl_print_usage() {
       "  --frame-color=COLOR\t\tWindow frame color for X11 clients\n"
       "  --virtwl-device=DEVICE\tVirtWL device to use\n"
       "  --drm-device=DEVICE\t\tDRM device to use\n"
-      "  --glamor\t\t\tUse glamor to accelerate X11 clients\n");
+      "  --glamor\t\t\tUse glamor to accelerate X11 clients\n"
+      "  --fullscreen-mode=MODE\tDefault fullscreen behavior (immersive,"
+      " plain)\n");
 }
 
 static const char* sl_arg_value(const char* arg) {
@@ -3531,7 +3577,7 @@ int main(int argc, char** argv) {
       .shm = NULL,
       .shell = NULL,
       .data_device_manager = NULL,
-      .xdg_wm_base = NULL,
+      .xdg_shell = NULL,
       .aura_shell = NULL,
       .viewporter = NULL,
       .linux_dmabuf = NULL,
@@ -3571,6 +3617,7 @@ int main(int argc, char** argv) {
       .clipboard_manager = 0,
       .frame_color = 0xffffffff,
       .dark_frame_color = 0xff000000,
+      .fullscreen_mode = ZAURA_SURFACE_FULLSCREEN_MODE_IMMERSIVE,
       .default_seat = NULL,
       .selection_window = XCB_WINDOW_NONE,
       .selection_owner = XCB_WINDOW_NONE,
@@ -3632,6 +3679,7 @@ int main(int argc, char** argv) {
   const char* virtwl_device = getenv("SOMMELIER_VIRTWL_DEVICE");
   const char* drm_device = getenv("SOMMELIER_DRM_DEVICE");
   const char* glamor = getenv("SOMMELIER_GLAMOR");
+  const char* fullscreen_mode = getenv("SOMMELIER_FULLSCREEN_MODE");
   const char* shm_driver = getenv("SOMMELIER_SHM_DRIVER");
   const char* data_driver = getenv("SOMMELIER_DATA_DRIVER");
   const char* peer_cmd_prefix = getenv("SOMMELIER_PEER_CMD_PREFIX");
@@ -3719,6 +3767,8 @@ int main(int argc, char** argv) {
       drm_device = sl_arg_value(arg);
     } else if (strstr(arg, "--glamor") == arg) {
       glamor = "1";
+    } else if (strstr(arg, "--fullscreen-mode") == arg) {
+      fullscreen_mode = sl_arg_value(arg);
     } else if (strstr(arg, "--x-auth") == arg) {
       xauth_path = sl_arg_value(arg);
     } else if (strstr(arg, "--x-font-path") == arg) {
@@ -3759,7 +3809,7 @@ int main(int argc, char** argv) {
 
     lock_fd = open(lock_addr, O_CREAT | O_CLOEXEC,
                    (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP));
-    assert(lock_fd >= 0);
+    errno_assert(lock_fd >= 0);
 
     rv = flock(lock_fd, LOCK_EX | LOCK_NB);
     if (rv < 0) {
@@ -3775,25 +3825,25 @@ int main(int argc, char** argv) {
       if (sock_stat.st_mode & (S_IWUSR | S_IWGRP))
         unlink(addr.sun_path);
     } else {
-      assert(errno == ENOENT);
+      errno_assert(errno == ENOENT);
     }
 
     sock_fd = socket(PF_LOCAL, SOCK_STREAM, 0);
-    assert(sock_fd >= 0);
+    errno_assert(sock_fd >= 0);
 
     rv = bind(sock_fd, (struct sockaddr*)&addr,
               offsetof(struct sockaddr_un, sun_path) + strlen(addr.sun_path));
-    assert(rv >= 0);
+    errno_assert(rv >= 0);
 
     rv = listen(sock_fd, 128);
-    assert(rv >= 0);
+    errno_assert(rv >= 0);
 
     // Spawn optional child process before we notify systemd that we're ready
     // to accept connections. WAYLAND_DISPLAY will be set but any attempt to
     // connect to this socket at this time will fail.
     if (ctx.runprog && ctx.runprog[0]) {
       pid = fork();
-      assert(pid != -1);
+      errno_assert(pid != -1);
       if (pid == 0) {
         setenv("WAYLAND_DISPLAY", socket_name, 1);
         sl_execvp(ctx.runprog[0], ctx.runprog, -1);
@@ -3810,7 +3860,7 @@ int main(int argc, char** argv) {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART;
     rv = sigaction(SIGCHLD, &sa, NULL);
-    assert(rv >= 0);
+    errno_assert(rv >= 0);
 
     do {
       struct ucred ucred;
@@ -3827,7 +3877,7 @@ int main(int argc, char** argv) {
       rv = getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &ucred, &length);
 
       pid = fork();
-      assert(pid != -1);
+      errno_assert(pid != -1);
       if (pid == 0) {
         char* client_fd_str;
         char* peer_pid_str;
@@ -3922,6 +3972,18 @@ int main(int argc, char** argv) {
       ctx.dark_frame_color = 0xff000000 | (r << 16) | (g << 8) | (b << 0);
   }
 
+  if (fullscreen_mode) {
+    if (strcmp(fullscreen_mode, "immersive") == 0) {
+      ctx.fullscreen_mode = ZAURA_SURFACE_FULLSCREEN_MODE_IMMERSIVE;
+    } else if (strcmp(fullscreen_mode, "plain") == 0) {
+      ctx.fullscreen_mode = ZAURA_SURFACE_FULLSCREEN_MODE_PLAIN;
+    } else {
+      fprintf(stderr, "error: unrecognised --fullscreen-mode\n");
+      sl_print_usage();
+      return EXIT_FAILURE;
+    }
+  }
+
   // Handle broken pipes without signals that kill the entire process.
   signal(SIGPIPE, SIG_IGN);
 
@@ -3957,7 +4019,7 @@ int main(int argc, char** argv) {
 
       // Connection to virtwl channel.
       rv = socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, vws);
-      assert(!rv);
+      errno_assert(!rv);
 
       ctx.virtwl_socket_fd = vws[0];
       virtwl_display_fd = vws[1];
@@ -4077,7 +4139,7 @@ int main(int argc, char** argv) {
   if (ctx.runprog || ctx.xwayland) {
     // Wayland connection from client.
     rv = socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv);
-    assert(!rv);
+    errno_assert(!rv);
 
     client_fd = sv[0];
   }
@@ -4193,7 +4255,7 @@ int main(int argc, char** argv) {
 
       // Xwayland display ready socket.
       rv = socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, ds);
-      assert(!rv);
+      errno_assert(!rv);
 
       ctx.display_ready_event_source =
           wl_event_loop_add_fd(event_loop, ds[0], WL_EVENT_READABLE,
@@ -4201,12 +4263,12 @@ int main(int argc, char** argv) {
 
       // X connection to Xwayland.
       rv = socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, wm);
-      assert(!rv);
+      errno_assert(!rv);
 
       ctx.wm_fd = wm[0];
 
       pid = fork();
-      assert(pid != -1);
+      errno_assert(pid != -1);
       if (pid == 0) {
         char* display_fd_str;
         char* wm_fd_str;
@@ -4274,7 +4336,7 @@ int main(int argc, char** argv) {
       ctx.xwayland_pid = pid;
     } else {
       pid = fork();
-      assert(pid != -1);
+      errno_assert(pid != -1);
       if (pid == 0) {
         sl_execvp(ctx.runprog[0], ctx.runprog, sv[1]);
         _exit(EXIT_FAILURE);
