@@ -49,7 +49,7 @@
         'protocol/linux-dmabuf-unstable-v1.xml',
         'protocol/text-input-unstable-v1.xml',
         'protocol/viewporter.xml',
-        'protocol/xdg-shell-unstable-v6.xml',
+        'protocol/xdg-shell.xml',
       ],
       'includes': ['wayland-protocol.gypi'],
     },
