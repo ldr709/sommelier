@@ -5,7 +5,7 @@ This runs a nested Wayland compositor that presents unscaled pixels to a new XWa
 ## To build
 
     sudo apt install -y pkg-config git make xwayland libwayland-dev libgbm-dev gcc libx11-xcb-dev \
-        libsystemd-dev libxcb-composite0-dev libxkbcommon-dev libxrender-dev libxtst-dev libpixman-1-dev
+        libsystemd-dev libxcb-composite0-dev libxkbcommon-dev libxrender-dev libxtst-dev libpixman-1-dev libdrm-dev
 
     meson out
     cd out
