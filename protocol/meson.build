@@ -18,7 +18,7 @@ protocols = [
     'relative-pointer-unstable-v1.xml',
     'text-input-unstable-v1.xml',
     'viewporter.xml',
-    'xdg-shell-unstable-v6.xml',
+    'xdg-shell.xml',
 ]
 
 wl_protos_src = []

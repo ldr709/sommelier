@@ -149,6 +149,7 @@ struct sl_context {
   int clipboard_manager;
   uint32_t frame_color;
   uint32_t dark_frame_color;
+  int fullscreen_mode;
   struct sl_host_seat* default_seat;
   xcb_window_t selection_window;
   xcb_window_t selection_owner;
@@ -208,6 +209,9 @@ struct sl_host_pointer {
   struct wl_resource* focus_resource;
   struct wl_listener focus_resource_listener;
   uint32_t focus_serial;
+  uint32_t time;
+  wl_fixed_t axis_delta[2];
+  int32_t axis_discrete[2];
 };
 
 struct sl_relative_pointer_manager {
@@ -377,7 +381,7 @@ struct sl_xdg_shell {
   struct sl_context* ctx;
   uint32_t id;
   struct sl_global* host_global;
-  struct zxdg_shell_v6* internal;
+  struct xdg_wm_base* internal;
 };
 
 struct sl_aura_shell {
@@ -470,15 +474,16 @@ struct sl_window {
   char* startup_id;
   int dark_frame;
   uint32_t size_flags;
+  int focus_model_take_focus;
   int min_width;
   int min_height;
   int max_width;
   int max_height;
   struct sl_config next_config;
   struct sl_config pending_config;
-  struct zxdg_surface_v6* xdg_surface;
-  struct zxdg_toplevel_v6* xdg_toplevel;
-  struct zxdg_popup_v6* xdg_popup;
+  struct xdg_surface* xdg_surface;
+  struct xdg_toplevel* xdg_toplevel;
+  struct xdg_popup* xdg_popup;
   struct zaura_surface* aura_surface;
   struct wl_list link;
 };
