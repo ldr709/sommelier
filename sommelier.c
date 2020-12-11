@@ -27,6 +27,11 @@
 #include <xcb/xfixes.h>
 #include <xcb/xproto.h>
 
+#ifdef __FreeBSD__
+#include <signal.h>
+#include <sys/ucred.h>
+#endif
+
 #include "aura-shell-client-protocol.h"
 #include "drm-server-protocol.h"
 #include "keyboard-extension-unstable-v1-client-protocol.h"
@@ -3812,7 +3817,11 @@ int main(int argc, char** argv) {
     assert(rv >= 0);
 
     do {
+#ifdef __linux__
       struct ucred ucred;
+#elif defined(__FreeBSD__)
+      struct xucred ucred;
+#endif
       socklen_t length = sizeof(addr);
 
       client_fd = accept(sock_fd, (struct sockaddr*)&addr, &length);
@@ -3821,9 +3830,14 @@ int main(int argc, char** argv) {
         continue;
       }
 
-      ucred.pid = -1;
       length = sizeof(ucred);
+#ifdef __linux__
+      ucred.pid = -1;
       rv = getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &ucred, &length);
+#elif defined(__FreeBSD__)
+      ucred.cr_pid = -1;
+      rv = getsockopt(client_fd, 0, LOCAL_PEERCRED, &ucred, &length);
+#endif
 
       pid = fork();
       assert(pid != -1);
@@ -3851,7 +3865,11 @@ int main(int argc, char** argv) {
         }
 
         args[i++] = argv[0];
+#ifdef __linux__
         peer_pid_str = sl_xasprintf("--peer-pid=%d", ucred.pid);
+#elif defined(__FreeBSD__)
+        peer_pid_str = sl_xasprintf("--peer-pid=%d", ucred.cr_pid);
+#endif
         args[i++] = peer_pid_str;
         client_fd_str = sl_xasprintf("--client-fd=%d", client_fd);
         args[i++] = client_fd_str;
