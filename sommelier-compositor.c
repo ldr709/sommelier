@@ -587,9 +587,10 @@ static void sl_host_surface_commit(struct wl_client* client,
 
       wp_viewport_set_destination(host->viewport, ceil(width / scale),
                                   ceil(height / scale));
-    } else {
+    } /* else {
       wl_surface_set_buffer_scale(host->proxy, scale);
-    }
+    } */
+    wl_surface_set_buffer_scale(host->proxy, scale);
   }
 
   // No need to defer client commits if surface has a role. E.g. is a cursor

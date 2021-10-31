@@ -4010,8 +4010,10 @@ int main(int argc, char** argv) {
 
   event_loop = wl_display_get_event_loop(ctx.host_display);
 
+  /*
   if (!virtwl_device)
     virtwl_device = VIRTWL_DEVICE;
+  */
 
   if (virtwl_device) {
     struct virtwl_ioctl_new new_ctx = {
@@ -4339,6 +4341,7 @@ int main(int argc, char** argv) {
         // If a path is explicitly specified via command line or environment
         // use that instead of the compiled in default.  In either case, only
         // set the environment variable if the value specified is non-empty.
+        /*
         if (xwayland_gl_driver_path) {
           if (*xwayland_gl_driver_path) {
             setenv("LIBGL_DRIVERS_PATH", xwayland_gl_driver_path, 1);
@@ -4346,6 +4349,7 @@ int main(int argc, char** argv) {
         } else if (XWAYLAND_GL_DRIVER_PATH && *XWAYLAND_GL_DRIVER_PATH) {
           setenv("LIBGL_DRIVERS_PATH", XWAYLAND_GL_DRIVER_PATH, 1);
         }
+        */
 
         sl_execvp(args[0], args, sv[1]);
         _exit(EXIT_FAILURE);
