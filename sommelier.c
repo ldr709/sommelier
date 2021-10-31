@@ -55,18 +55,22 @@
 #ifndef XWAYLAND_PATH
 #error XWAYLAND_PATH must be defined
 #endif
+/*
 #ifndef XWAYLAND_GL_DRIVER_PATH
 #error XWAYLAND_GL_DRIVER_PATH must be defined
 #endif
+*/
 #ifndef XWAYLAND_SHM_DRIVER
 #error XWAYLAND_SHM_DRIVER must be defined
 #endif
 #ifndef SHM_DRIVER
 #error SHM_DRIVER must be defined
 #endif
+/*
 #ifndef VIRTWL_DEVICE
 #error VIRTWL_DEVICE must be defined
 #endif
+*/
 #ifndef PEER_CMD_PREFIX
 #error PEER_CMD_PREFIX must be defined
 #endif
@@ -3691,8 +3695,8 @@ int main(int argc, char** argv) {
   const char* xwayland_cmd_prefix = getenv("SOMMELIER_XWAYLAND_CMD_PREFIX");
   const char* accelerators = getenv("SOMMELIER_ACCELERATORS");
   const char* xwayland_path = getenv("SOMMELIER_XWAYLAND_PATH");
-  const char* xwayland_gl_driver_path =
-      getenv("SOMMELIER_XWAYLAND_GL_DRIVER_PATH");
+  // const char* xwayland_gl_driver_path =
+  //     getenv("SOMMELIER_XWAYLAND_GL_DRIVER_PATH");
   const char* xauth_path = getenv("SOMMELIER_XAUTH_PATH");
   const char* xfont_path = getenv("SOMMELIER_XFONT_PATH");
   const char* socket_name = "wayland-0";
@@ -3754,9 +3758,9 @@ int main(int argc, char** argv) {
       ctx.xwayland = 1;
     } else if (strstr(arg, "--xwayland-path") == arg) {
       xwayland_path = sl_arg_value(arg);
-    } else if (strstr(arg, "--xwayland-gl-driver-path") == arg) {
+    } /* else if (strstr(arg, "--xwayland-gl-driver-path") == arg) {
       xwayland_gl_driver_path = sl_arg_value(arg);
-    } else if (strstr(arg, "--no-exit-with-child") == arg) {
+    } */ else if (strstr(arg, "--no-exit-with-child") == arg) {
       ctx.exit_with_child = 0;
     } else if (strstr(arg, "--sd-notify") == arg) {
       ctx.sd_notify = sl_arg_value(arg);

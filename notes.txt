@@ -1,0 +1,4 @@
+to run: build/sommelier --drm-device=/dev/dri/card0 --shm-driver=dmabuf --data-driver=noop -X --glamor --x-display=5 --dpi=192 --scale=2 <program>
+- hardware acceleration is supported, somewhat
+- both gpus should be visible in Xwayland display, use __NV_PRIME_RENDER_OFFLOAD or similar as usual
+- issue in kwin where mouse goes missing

@@ -4,15 +4,15 @@
 
 option('xwayland_path',
   type: 'string',
-  value: '/opt/google/cros-containers/bin/Xwayland',
+  value: '/usr/bin/Xwayland',
   description: 'path to Xwayland'
 )
 
-option('xwayland_gl_driver_path',
-  type: 'string',
-  value: '/opt/google/cros-containers/lib',
-  description: 'the GL driver path to use for Xwayland'
-)
+#option('xwayland_gl_driver_path',
+#  type: 'string',
+#  value: '/opt/google/cros-containers/lib',
+#  description: 'the GL driver path to use for Xwayland'
+#)
 
 option('xwayland_shm_driver',
   type: 'string',
@@ -26,11 +26,11 @@ option('shm_driver',
   description: 'shm driver to use for wayland clients'
 )
 
-option('virtwl_device',
-  type: 'string',
-  value: '/dev/wl0',
-  description: 'the virtwl device'
-)
+#option('virtwl_device',
+#  type: 'string',
+#  value: '/dev/wl0',
+#  description: 'the virtwl device'
+#)
 
 option('frame_color',
   type: 'string',
