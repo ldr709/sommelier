@@ -57,7 +57,10 @@ void sl_output_get_host_output_state(struct sl_host_output* host,
   // Failing that, we will use the scale set for this wl_output.
   double applied_scale = device_scale_factor * current_scale;
   if (!host->ctx->aura_shell) {
-    applied_scale = host->scale_factor;
+    if (host->ctx->scale == 1.0)
+      applied_scale = host->scale_factor;
+    else
+      applied_scale = host->ctx->scale;
   }
 
   int target_dpi = DEFACTO_DPI;
